@@ -1,8 +1,10 @@
 # 插件展示名（市场显示）
-name: "数字群友"
+name: "astrbot_plugin_digital_member"
+display_name: "数字群友"
 desc: "分析群友历史消息，生成说话风格和个人画像，支持模仿群友进行交流"
 version: "1.0.0"
 author: "Leafiber"
+repo: "https://github.com/Leafliber/astrbot_plugin_digital_member"
 # 支持的平台适配器
 support_platforms:
   - aiocqhttp    # OneBot 协议
