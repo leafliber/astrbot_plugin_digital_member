@@ -17,7 +17,7 @@ class PersonaStorage:
         # 使用插件实例获取存储能力
         self.star = star_instance
         # 大文件存储路径
-        self.data_path = get_astrbot_data_path() / "plugin_data" / star_instance.name / "personas"
+        self.data_path = Path(get_astrbot_data_path()) / "plugin_data" / star_instance.name / "personas"
         self.data_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"[存储] 画像数据路径: {self.data_path}")
 

@@ -525,27 +525,43 @@ class Main(Star):
         # 权限检查
         is_authorized = False
 
-        # 1. 检查是否是 Bot 管理员（从全局配置获取）
-        try:
-            # AstrBot 全局管理员配置在 context._config 中
-            global_config = getattr(self.context, '_config', None)
-            if global_config:
-                admin_uids = global_config.get("admin_uid", [])
-                if not isinstance(admin_uids, list):
-                    admin_uids = [admin_uids] if admin_uids else []
-                if sender_qq in [str(u) for u in admin_uids]:
-                    is_authorized = True
-        except Exception:
-            pass  # 无法获取管理员配置时跳过
-
-        # 2. 检查是否是被克隆本人
+        # 1. 检查是否是被克隆本人（优先检查，最直接）
         if sender_qq and sender_qq == target_qq:
             is_authorized = True
 
-        # 3. 检查是否是发起克隆的人
+        # 2. 检查是否是发起克隆的人
         requester_qq = persona.get('requester_qq')
         if requester_qq and sender_qq == str(requester_qq):
             is_authorized = True
+
+        # 3. 检查是否是 Bot 管理员
+        # 注意：管理员检查放在最后，因为前两个条件已足够时无需额外检查
+        if not is_authorized:
+            try:
+                # 尝试多种方式获取管理员列表（AstrBot 使用 admins_id 字段）
+                admin_ids = []
+
+                # 方式1: 通过 context.astrbot_config 获取
+                if hasattr(self.context, 'astrbot_config'):
+                    cfg = self.context.astrbot_config
+                    admins = cfg.get("admins_id", [])
+                    if isinstance(admins, list):
+                        admin_ids.extend(admins)
+
+                # 方式2: 通过 context._config 获取
+                if not admin_ids and hasattr(self.context, '_config'):
+                    cfg = self.context._config
+                    admins = cfg.get("admins_id", [])
+                    if isinstance(admins, list):
+                        admin_ids.extend(admins)
+
+                # 检查发送者是否在管理员列表中
+                if sender_qq in [str(a) for a in admin_ids]:
+                    is_authorized = True
+                    logger.info(f"[数字群友] 用户 {sender_qq} 是管理员，允许删除")
+
+            except Exception as e:
+                logger.warning(f"[数字群友] 获取管理员列表失败: {e}，跳过管理员权限检查")
 
         if not is_authorized:
             yield event.plain_result(
