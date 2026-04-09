@@ -174,13 +174,13 @@ class Main(Star):
             yield event.plain_result("没有等待你确认的克隆请求")
             return
 
-        # 检查请求是否过期（默认5分钟）
+        # 检查请求是否过期（默认1小时）
         created_at = pending.get("created_at")
         if created_at:
             request_time = datetime.fromisoformat(created_at)
-            if datetime.now() - request_time > timedelta(minutes=5):
+            if datetime.now() - request_time > timedelta(minutes=60):
                 await self.storage.delete_pending_request(group_id, sender_qq)
-                yield event.plain_result("克隆请求已过期（超过5分钟），请重新发起")
+                yield event.plain_result("克隆请求已过期（超过1小时），请重新发起")
                 return
 
         # 执行克隆
