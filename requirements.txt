@@ -1,0 +1,2 @@
+# 无额外依赖，使用 AstrBot 内置功能
+# astrbot-plugin-digital-member 只依赖 AstrBot 核心功能

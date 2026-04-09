@@ -1,0 +1,9 @@
+# 插件展示名（市场显示）
+display_name: "数字群友"
+
+# 支持的平台适配器
+support_platforms:
+  - aiocqhttp    # OneBot 协议
+
+# AstrBot 版本约束（PEP 440 格式）
+astrbot_version: ">=4.16,<5"
