@@ -1,6 +1,6 @@
 # 插件展示名（市场显示）
-display_name: "数字群友"
-
+name: "数字群友"
+author: "Leafiber"
 # 支持的平台适配器
 support_platforms:
   - aiocqhttp    # OneBot 协议
