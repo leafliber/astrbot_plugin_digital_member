@@ -98,20 +98,48 @@ class MessageCollector:
                     message_seq=message_seq,
                     count=self.BATCH_SIZE
                 )
-                messages = result.get("data", {}).get("messages", [])
+
+                # 调试：打印 API 返回结构
+                logger.debug(f"[人格克隆] API返回: {type(result)}, keys={result.keys() if isinstance(result, dict) else 'N/A'}")
+
+                # 如果第一次调用就返回空，打印完整返回以便调试
+                if message_seq == 0 and not (isinstance(result, dict) and (result.get("data", {}).get("messages") or result.get("messages"))):
+                    logger.warning(f"[人格克隆] API首次调用返回空，完整返回: {result}")
+
+                # 兼容不同的返回格式
+                if isinstance(result, dict):
+                    # 方式1: AstrBot call_action 直接返回 data 内容
+                    messages = result.get("messages", [])
+                    # 方式2: 完整的 API 响应格式 {"data": {"messages": []}}
+                    if not messages and "data" in result:
+                        messages = result.get("data", {}).get("messages", [])
+                    # 方式3: 某些协议端可能用 results
+                    if not messages:
+                        messages = result.get("results", [])
+                else:
+                    messages = []
+
+                logger.debug(f"[人格克隆] 获取到 {len(messages)} 条消息")
 
                 if not messages:
                     logger.info("[人格克隆] 无更多消息，停止收集")
                     break
 
                 # 处理消息
+                first_msg_logged = False
                 for msg in messages:
                     msg_time = msg.get('time', 0)
                     msg_user = str(msg.get('sender', {}).get('user_id', ''))
 
+                    # 调试：打印第一条消息的信息
+                    if not first_msg_logged:
+                        logger.debug(f"[人格克隆] 第一条消息: time={msg_time}, user={msg_user}, raw={msg.get('raw_message', '')[:50]}...")
+                        logger.debug(f"[人格克隆] 截止时间戳: {cutoff_timestamp}, 当前时间戳: {int(datetime.now().timestamp())}")
+                        first_msg_logged = True
+
                     # 时间检查
                     if cutoff_timestamp and msg_time < cutoff_timestamp:
-                        logger.info(f"[人格克隆] 时间范围达标，停止收集")
+                        logger.debug(f"[人格克隆] 消息时间 {msg_time} < 截止时间 {cutoff_timestamp}，停止收集")
                         return self._finalize_messages(user_messages)
 
                     all_messages.append(msg)
