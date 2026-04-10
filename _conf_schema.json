@@ -5,6 +5,13 @@
     "default": "30天",
     "options": ["7天", "30天", "90天", "全部"]
   },
+  "analyze_provider_id": {
+    "description": "分析画像使用的LLM提供商ID（留空使用默认提供商）",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用当前会话的默认LLM，也可输入如 openai_chat、deepseek_chat 等",
+    "_special": "select_provider"
+  },
   "batch_size": {
     "description": "调用API时每批次获取的消息数量",
     "type": "int",

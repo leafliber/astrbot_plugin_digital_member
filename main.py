@@ -25,6 +25,7 @@ class Main(Star):
 
         # 从配置读取参数
         self.default_time_range = config.get("default_time_range", "30天")
+        self.analyze_provider_id = config.get("analyze_provider_id", "")  # 留空使用默认
         self.batch_size = config.get("batch_size", 100)
         self.batch_delay_ms = config.get("batch_delay_ms", 100)
         self.max_analyze_count = config.get("max_analyze_count", 500)
@@ -225,8 +226,18 @@ class Main(Star):
             yield event.plain_result(f"未找到 {alias} 在 {time_desc} 的有效消息")
             return
 
+        # 获取 LLM 提供商 ID
+        provider_id = self.analyze_provider_id
+        if not provider_id:
+            # 未配置时，使用当前会话的默认提供商
+            umo = event.unified_msg_origin
+            provider_id = await self.context.get_current_chat_provider_id(umo=umo)
+            logger.debug(f"[人格克隆] 使用默认提供商: {provider_id}")
+        else:
+            logger.debug(f"[人格克隆] 使用配置的提供商: {provider_id}")
+
         # 自动分析生成画像
-        persona = await self.persona_analyzer.analyze(messages)
+        persona = await self.persona_analyzer.analyze(messages, provider_id=provider_id)
         persona['alias'] = alias
         # 记录发起者（用于权限控制）
         if requester_qq:
@@ -315,9 +326,6 @@ class Main(Star):
         # 获取人格独立的对话历史
         history = await self.conversation_manager.get_history(target_qq)
 
-        # 记录用户消息
-        await self.conversation_manager.add_message(target_qq, 'user', question)
-
         # 生成带历史的 prompt
         prompt = self.prompt_generator.generate(persona, question, history)
 
@@ -325,6 +333,9 @@ class Main(Star):
         try:
             umo = event.unified_msg_origin
             prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+
+            # 记录用户消息（传入 provider_id 用于后续压缩）
+            await self.conversation_manager.add_message(target_qq, 'user', question, provider_id=prov_id)
 
             llm_resp = await self.context.llm_generate(
                 chat_provider_id=prov_id,
@@ -334,7 +345,7 @@ class Main(Star):
             response = llm_resp.completion_text
 
             # 记录回复
-            await self.conversation_manager.add_message(target_qq, 'assistant', response)
+            await self.conversation_manager.add_message(target_qq, 'assistant', response, provider_id=prov_id)
 
             yield event.plain_result(response)
 
@@ -642,13 +653,13 @@ class Main(Star):
         # 生成 prompt
         prompt = self.prompt_generator.generate(persona, event.message_str, history)
 
-        # 记录用户消息
-        await self.conversation_manager.add_message(qq, 'user', event.message_str)
-
         # 调用 AI
         try:
             umo = event.unified_msg_origin
             prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+
+            # 记录用户消息（传入 provider_id 用于后续压缩）
+            await self.conversation_manager.add_message(qq, 'user', event.message_str, provider_id=prov_id)
 
             llm_resp = await self.context.llm_generate(
                 chat_provider_id=prov_id,
@@ -658,7 +669,7 @@ class Main(Star):
             response = llm_resp.completion_text
 
             # 记录回复
-            await self.conversation_manager.add_message(qq, 'assistant', response)
+            await self.conversation_manager.add_message(qq, 'assistant', response, provider_id=prov_id)
 
             yield event.plain_result(response)
 

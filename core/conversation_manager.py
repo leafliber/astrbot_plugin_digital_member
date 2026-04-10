@@ -24,6 +24,7 @@ class PersonaConversationManager:
         self.MAX_HISTORY_TURNS = max_turns        # 最大保留对话轮数
         self.COMPRESS_THRESHOLD = compress_threshold  # 触发压缩的阈值
         self.SUMMARY_TURNS = summary_turns        # 压缩时保留的最近轮数
+        self._current_provider_id = None          # 当前使用的提供商 ID
 
     async def get_history(self, qq: str) -> list:
         """获取人格的对话历史
@@ -39,18 +40,23 @@ class PersonaConversationManager:
             return persona['conversation_history']
         return []
 
-    async def add_message(self, qq: str, role: str, content: str):
+    async def add_message(self, qq: str, role: str, content: str, provider_id: str = None):
         """添加消息到对话历史
 
         Args:
             qq: 用户 QQ 号
             role: 角色（user/assistant/system）
             content: 消息内容
+            provider_id: 当前使用的 LLM 提供商 ID（用于后续压缩摘要）
         """
         persona = await self.storage.load_persona(qq)
         if not persona:
             logger.warning(f"[人格对话] 未找到用户 {qq} 的画像")
             return
+
+        # 保存当前的 provider_id 用于压缩摘要
+        if provider_id:
+            self._current_provider_id = provider_id
 
         if 'conversation_history' not in persona:
             persona['conversation_history'] = []
@@ -126,7 +132,7 @@ class PersonaConversationManager:
         try:
             if self.context:
                 llm_resp = await self.context.llm_generate(
-                    chat_provider_id=None,
+                    chat_provider_id=self._current_provider_id,
                     prompt=summary_prompt,
                 )
                 return llm_resp.completion_text.strip()

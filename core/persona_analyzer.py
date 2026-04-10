@@ -13,11 +13,12 @@ class PersonaAnalyzer:
     def __init__(self, context: Context):
         self.context = context
 
-    async def analyze(self, messages: list) -> dict:
+    async def analyze(self, messages: list, provider_id: str = None) -> dict:
         """分析消息生成画像
 
         Args:
             messages: 消息列表，每条包含 time 和 content
+            provider_id: LLM 提供商 ID，为 None 时使用默认提供商
 
         Returns:
             人格画像字典
@@ -31,7 +32,7 @@ class PersonaAnalyzer:
         try:
             # 调用 LLM 分析
             llm_resp = await self.context.llm_generate(
-                chat_provider_id=None,  # 使用默认 Provider
+                chat_provider_id=provider_id,
                 prompt=prompt,
             )
 
