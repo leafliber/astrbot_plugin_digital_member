@@ -1,13 +1,17 @@
 # 插件展示名（市场显示）
 name: "astrbot_plugin_digital_member"
-display_name: "数字群友"
+display_name: "数字分身"
 desc: "分析群友历史消息，生成说话风格和个人画像，支持模仿群友进行交流"
-version: "1.0.0"
+version: "2.0.0"
 author: "Leafiber"
 repo: "https://github.com/Leafliber/astrbot_plugin_digital_member"
-# 支持的平台适配器
-support_platforms:
-  - aiocqhttp    # OneBot 协议
+
+# 支持所有平台适配器（依赖 message_recorder 获取历史消息）
+# support_platforms 不设置限制，表示支持所有平台
 
 # AstrBot 版本约束（PEP 440 格式）
 astrbot_version: ">=4.16,<5"
+
+# 插件依赖
+dependencies:
+  - "astrbot_plugin_message_recorder"

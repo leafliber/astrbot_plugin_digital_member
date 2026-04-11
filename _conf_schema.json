@@ -12,18 +12,6 @@
     "hint": "留空使用当前会话的默认LLM，也可输入如 openai_chat、deepseek_chat 等",
     "_special": "select_provider"
   },
-  "batch_size": {
-    "description": "调用API时每批次获取的消息数量",
-    "type": "int",
-    "default": 100,
-    "hint": "建议50-200，过大可能导致API超时"
-  },
-  "batch_delay_ms": {
-    "description": "批次间延迟（毫秒）",
-    "type": "int",
-    "default": 300,
-    "hint": "避免API限速"
-  },
   "max_analyze_count": {
     "description": "最终送给LLM分析的最大消息数",
     "type": "int",

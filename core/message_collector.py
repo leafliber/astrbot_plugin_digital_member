@@ -1,34 +1,38 @@
 """
-消息收集器 - 全自动分批获取群历史消息
+消息收集器 - 使用 message_recorder 插件 API 获取历史消息
 """
-from datetime import datetime, timedelta
-import asyncio
+from typing import Optional
 from astrbot import logger
-from astrbot.api.event import AstrMessageEvent
-from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
-
-# 时间范围解析映射
-TIME_RANGE_MAP = {
-    "7d": 7, "7天": 7,
-    "30d": 30, "30天": 30,
-    "90d": 90, "90天": 90,
-    "all": None, "全部": None, "所有": None,
-}
+from astrbot.api.star import Context
 
 
 class MessageCollector:
-    """消息收集器 - 自动分批获取群历史消息"""
+    """消息收集器 - 使用 astrbot_plugin_message_recorder API"""
 
-    def __init__(
-        self,
-        batch_size: int = 100,
-        batch_delay_ms: int = 100,
-        max_analyze_count: int = 500,
-    ):
-        self.BATCH_SIZE = batch_size
-        self.BATCH_DELAY = batch_delay_ms / 1000.0  # 转换为秒
+    def __init__(self, max_analyze_count: int = 500):
         self.MAX_ANALYZE_COUNT = max_analyze_count
-        self.MAX_RAW_MESSAGES = 10000  # 单次获取的最大原始消息数
+        self._recorder_api = None
+
+    async def get_recorder_api(self, context: Context) -> Optional[object]:
+        """获取 message_recorder 插件的 API 实例
+
+        Args:
+            context: AstrBot 插件上下文
+
+        Returns:
+            MessageRecorderAPI 实例，如果未找到则返回 None
+        """
+        if self._recorder_api is None:
+            recorder = context.get_registered_star("astrbot_plugin_message_recorder")
+            if recorder and hasattr(recorder, 'get_api'):
+                self._recorder_api = recorder.get_api()
+                if self._recorder_api:
+                    logger.info("[消息收集] 已获取 message_recorder API")
+                else:
+                    logger.warning("[消息收集] message_recorder 插件未正确初始化")
+            else:
+                logger.warning("[消息收集] 未找到 message_recorder 插件")
+        return self._recorder_api
 
     def parse_time_range(self, time_str: str) -> int | None:
         """解析时间范围参数
@@ -39,6 +43,12 @@ class MessageCollector:
         Returns:
             天数（int）或 None（表示全部）
         """
+        TIME_RANGE_MAP = {
+            "7d": 7, "7天": 7,
+            "30d": 30, "30天": 30,
+            "90d": 90, "90天": 90,
+            "all": None, "全部": None, "所有": None,
+        }
         if not time_str:
             return 30  # 默认30天
         time_str = time_str.strip().lower()
@@ -46,140 +56,82 @@ class MessageCollector:
 
     async def collect_messages(
         self,
-        event: AstrMessageEvent,
-        user_id: str,
+        context: Context,
+        sender_id: str,
+        group_id: str,
         time_range: int | None = 30
     ) -> list:
-        """
-        全自动分批获取群历史消息并筛选指定用户
+        """收集用户历史消息
 
         Args:
-            event: AstrBot 消息事件
-            user_id: 目标用户 QQ 号
+            context: AstrBot 插件上下文
+            sender_id: 目标用户 ID
+            group_id: 群组 ID
             time_range: 时间范围（天数），None 表示全部
 
         Returns:
-            筛选后的用户消息列表
+            消息列表，每条包含 time 和 content
         """
-        # 检查平台类型
-        if event.get_platform_name() != "aiocqhttp":
-            logger.warning("[人格克隆] 仅支持 aiocqhttp 平台")
+        api = await self.get_recorder_api(context)
+        if not api:
+            logger.error("[消息收集] 未找到 message_recorder 插件，无法获取历史消息")
+            logger.info("[消息收集] 请确保已安装 astrbot_plugin_message_recorder 插件")
             return []
 
-        if not isinstance(event, AiocqhttpMessageEvent):
-            logger.warning("[人格克隆] 事件类型不匹配")
-            return []
-
-        client = event.bot
-        group_id = event.message_obj.group_id
-
-        if not group_id:
-            logger.warning("[人格克隆] 非群聊消息")
-            return []
-
-        # 计算时间截止点
-        cutoff_timestamp = None
-        if time_range is not None:
-            cutoff_timestamp = int((datetime.now() - timedelta(days=time_range)).timestamp())
-
+        # 时间参数转换
+        time_param = self._convert_time_range(time_range)
         time_desc = "全部历史" if time_range is None else f"最近{time_range}天"
-        logger.info(f"[人格克隆] 开始收集: 群={group_id}, 用户={user_id}, 时间范围={time_desc}")
 
-        all_messages = []
-        user_messages = []
-        message_seq = 0
+        logger.info(f"[消息收集] 开始查询: 用户={sender_id}, 群={group_id}, 时间={time_desc}")
 
-        # 自动循环获取
-        while len(all_messages) < self.MAX_RAW_MESSAGES:
-            try:
-                result = await client.api.call_action(
-                    'get_group_msg_history',
-                    group_id=int(group_id),
-                    message_seq=message_seq,
-                    count=self.BATCH_SIZE
-                )
+        try:
+            # 调用 message_recorder API
+            records = await api.query(
+                sender_id=sender_id,
+                group_id=group_id,
+                time=time_param,
+                limit=self.MAX_ANALYZE_COUNT,
+                order="asc"  # 按时间正序
+            )
 
-                # 调试：打印 API 返回结构
-                logger.debug(f"[人格克隆] API返回: {type(result)}, keys={result.keys() if isinstance(result, dict) else 'N/A'}")
+            logger.info(f"[消息收集] API 返回 {len(records)} 条记录")
 
-                # 如果第一次调用就返回空，打印完整返回以便调试
-                if message_seq == 0 and not (isinstance(result, dict) and (result.get("data", {}).get("messages") or result.get("messages"))):
-                    logger.warning(f"[人格克隆] API首次调用返回空，完整返回: {result}")
+            # 转换为分析器需要的格式
+            messages = []
+            for record in records:
+                # message_str 是消息文本内容
+                content = record.message_str
+                if content and content.strip():
+                    # timestamp 是毫秒，转换为秒
+                    timestamp = record.timestamp // 1000 if record.timestamp else 0
+                    messages.append({
+                        'time': timestamp,
+                        'content': content.strip()
+                    })
 
-                # 兼容不同的返回格式
-                if isinstance(result, dict):
-                    # 方式1: AstrBot call_action 直接返回 data 内容
-                    messages = result.get("messages", [])
-                    # 方式2: 完整的 API 响应格式 {"data": {"messages": []}}
-                    if not messages and "data" in result:
-                        messages = result.get("data", {}).get("messages", [])
-                    # 方式3: 某些协议端可能用 results
-                    if not messages:
-                        messages = result.get("results", [])
-                else:
-                    messages = []
+            logger.info(f"[消息收集] 有效消息: {len(messages)} 条")
 
-                logger.debug(f"[人格克隆] 获取到 {len(messages)} 条消息")
+            # 如果消息太少，输出提示
+            if len(messages) < 50:
+                logger.warning(f"[消息收集] 消息数量较少({len(messages)}条)")
+                logger.warning("[消息收集] 可能原因: 1. 用户发言较少; 2. message_recorder 记录时间较短")
 
-                if not messages:
-                    logger.info("[人格克隆] 无更多消息，停止收集")
-                    break
+            return messages
 
-                # 处理消息
-                first_msg_logged = False
-                for msg in messages:
-                    msg_time = msg.get('time', 0)
-                    msg_user = str(msg.get('sender', {}).get('user_id', ''))
+        except Exception as e:
+            logger.error(f"[消息收集] 查询失败: {e}")
+            logger.debug(f"[消息收集] 错误类型: {type(e).__name__}")
+            return []
 
-                    # 调试：打印第一条消息的信息
-                    if not first_msg_logged:
-                        logger.debug(f"[人格克隆] 第一条消息: time={msg_time}, user={msg_user}, raw={msg.get('raw_message', '')[:50]}...")
-                        logger.debug(f"[人格克隆] 截止时间戳: {cutoff_timestamp}, 当前时间戳: {int(datetime.now().timestamp())}")
-                        first_msg_logged = True
-
-                    # 时间检查
-                    if cutoff_timestamp and msg_time < cutoff_timestamp:
-                        logger.debug(f"[人格克隆] 消息时间 {msg_time} < 截止时间 {cutoff_timestamp}，停止收集")
-                        return self._finalize_messages(user_messages)
-
-                    all_messages.append(msg)
-
-                    # 筛选目标用户
-                    if msg_user == user_id:
-                        raw_msg = msg.get('raw_message', '')
-                        if raw_msg and raw_msg.strip():
-                            user_messages.append({
-                                'time': msg_time,
-                                'content': raw_msg.strip(),
-                            })
-
-                # 获取下一批起点
-                next_seq = messages[-1].get('message_seq', 0)
-                if next_seq == message_seq or next_seq == 0:
-                    logger.info("[人格克隆] 已到达最早消息")
-                    break
-                message_seq = next_seq
-
-                # 批次延迟，避免API限速
-                await asyncio.sleep(self.BATCH_DELAY)
-
-            except Exception as e:
-                logger.error(f"[人格克隆] API错误: {e}")
-                break
-
-        logger.info(f"[人格克隆] 收集完成: 原始={len(all_messages)}, 用户={len(user_messages)}")
-        return self._finalize_messages(user_messages)
-
-    def _finalize_messages(self, messages: list) -> list:
-        """最终处理：限制数量，保留最新
+    def _convert_time_range(self, days: int | None) -> str:
+        """将天数转换为 message_recorder 时间格式
 
         Args:
-            messages: 消息列表
+            days: 天数，None 表示全部
 
         Returns:
-            处理后的消息列表（最多 MAX_ANALYZE_COUNT 条）
+            message_recorder 支持的时间格式字符串
         """
-        if len(messages) > self.MAX_ANALYZE_COUNT:
-            logger.info(f"[人格克隆] 消息数量超限，保留最近 {self.MAX_ANALYZE_COUNT} 条")
-            return messages[-self.MAX_ANALYZE_COUNT:]
-        return messages
+        if days is None:
+            return "all"  # 全部历史
+        return f"last{days}d"  # 如 "last30d", "last7d"

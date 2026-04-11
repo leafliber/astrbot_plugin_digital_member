@@ -26,8 +26,6 @@ class Main(Star):
         # 从配置读取参数
         self.default_time_range = config.get("default_time_range", "30天")
         self.analyze_provider_id = config.get("analyze_provider_id", "")  # 留空使用默认
-        self.batch_size = config.get("batch_size", 100)
-        self.batch_delay_ms = config.get("batch_delay_ms", 100)
         self.max_analyze_count = config.get("max_analyze_count", 500)
         self.max_history_turns = config.get("max_history_turns", 20)
         self.compress_threshold = config.get("compress_threshold", 15)
@@ -36,8 +34,6 @@ class Main(Star):
         # 初始化组件
         self.storage = PersonaStorage(self)
         self.message_collector = MessageCollector(
-            batch_size=self.batch_size,
-            batch_delay_ms=self.batch_delay_ms,
             max_analyze_count=self.max_analyze_count,
         )
         self.persona_analyzer = PersonaAnalyzer(context)
@@ -211,16 +207,18 @@ class Main(Star):
         days = self.message_collector.parse_time_range(time_range_str)
         time_desc = "全部历史" if days is None else f"最近{days}天"
 
+        # 获取群 ID
+        group_id = event.message_obj.group_id
+
         yield event.plain_result(f"正在克隆 {alias} 的人格...\n时间范围: {time_desc}")
 
-        # 自动分批收集消息
+        # 使用 message_recorder 收集消息
         messages = await self.message_collector.collect_messages(
-            event=event,
-            user_id=target_qq,
+            context=self.context,
+            sender_id=target_qq,
+            group_id=group_id,
             time_range=days
         )
-
-        group_id = event.message_obj.group_id
 
         if not messages:
             yield event.plain_result(f"未找到 {alias} 在 {time_desc} 的有效消息")
@@ -323,16 +321,25 @@ class Main(Star):
             yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /mb 分析")
             return
 
+        # 获取代称
+        alias = persona.get('alias', target_qq)
+
         # 获取人格独立的对话历史
         history = await self.conversation_manager.get_history(target_qq)
 
+        logger.debug(f"[数字群友] 询问目标: {alias} (QQ:{target_qq})")
+        logger.debug(f"[数字群友] 问题: {question}")
+        logger.debug(f"[数字群友] 历史轮数: {len(history)}")
+
         # 生成带历史的 prompt
-        prompt = self.prompt_generator.generate(persona, question, history)
+        prompt = self.prompt_generator.generate(persona, question, history, alias)
+        logger.debug(f"[数字群友] Prompt长度: {len(prompt)}")
 
         # 直接调用 AI，注入人格上下文
         try:
             umo = event.unified_msg_origin
             prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+            logger.debug(f"[数字群友] 使用LLM提供商: {prov_id}")
 
             # 记录用户消息（传入 provider_id 用于后续压缩）
             await self.conversation_manager.add_message(target_qq, 'user', question, provider_id=prov_id)
@@ -343,6 +350,8 @@ class Main(Star):
             )
 
             response = llm_resp.completion_text
+            logger.debug(f"[数字群友] LLM响应长度: {len(response)}")
+            logger.debug(f"[数字群友] LLM响应预览: {response[:100]}...")
 
             # 记录回复
             await self.conversation_manager.add_message(target_qq, 'assistant', response, provider_id=prov_id)
@@ -627,7 +636,6 @@ class Main(Star):
     # ===== 群消息监听（持续唤醒） =====
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
-    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     async def on_group_message(self, event: AstrMessageEvent):
         """处理群消息，支持持续唤醒模式"""
         group_id = event.message_obj.group_id
@@ -647,16 +655,23 @@ class Main(Star):
         if not persona:
             return
 
+        alias = persona.get('alias', alias)
+
         # 获取对话历史
         history = await self.conversation_manager.get_history(qq)
 
+        logger.debug(f"[数字群友] 唤醒模式响应: {alias} (QQ:{qq})")
+        logger.debug(f"[数字群友] 收到消息: {event.message_str}")
+
         # 生成 prompt
-        prompt = self.prompt_generator.generate(persona, event.message_str, history)
+        prompt = self.prompt_generator.generate(persona, event.message_str, history, alias)
+        logger.debug(f"[数字群友] Prompt长度: {len(prompt)}")
 
         # 调用 AI
         try:
             umo = event.unified_msg_origin
             prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+            logger.debug(f"[数字群友] 唤醒模式使用LLM提供商: {prov_id}")
 
             # 记录用户消息（传入 provider_id 用于后续压缩）
             await self.conversation_manager.add_message(qq, 'user', event.message_str, provider_id=prov_id)
@@ -667,6 +682,8 @@ class Main(Star):
             )
 
             response = llm_resp.completion_text
+            logger.debug(f"[数字群友] 唤醒模式响应长度: {len(response)}")
+            logger.debug(f"[数字群友] 唤醒模式响应预览: {response[:100]}...")
 
             # 记录回复
             await self.conversation_manager.add_message(qq, 'assistant', response, provider_id=prov_id)

@@ -31,12 +31,16 @@ class PersonaAnalyzer:
 
         try:
             # 调用 LLM 分析
+            logger.debug(f"[人格分析] 开始分析 {len(messages)} 条消息，提供商: {provider_id}")
+
             llm_resp = await self.context.llm_generate(
                 chat_provider_id=provider_id,
                 prompt=prompt,
             )
 
             response_text = llm_resp.completion_text
+            logger.debug(f"[人格分析] LLM响应长度: {len(response_text)}")
+            logger.debug(f"[人格分析] LLM响应预览: {response_text[:200]}...")
             logger.info(f"[人格分析] LLM响应长度: {len(response_text)}")
 
             return self._parse_response(response_text, len(messages))
@@ -70,11 +74,17 @@ class PersonaAnalyzer:
 {sample_texts}
 
 请输出 JSON 格式的画像，包含以下字段：
-- personality: 性格特征描述（简短概括，如"开朗活泼"、"内向稳重"）
-- speaking_style: 说话风格（如幽默、严肃、可爱、直率等）
-- catchphrases: 口头禅列表（找出常用的词语或表情）
-- interests: 兴趣爱好关键词（从消息内容推断）
-- emoji_usage: 表情符号使用习惯描述
+- personality: 性格特征描述（2-4个字的概括，如「开朗活泼」「内向稳重」「幽默风趣」「直率坦诚」等）
+- speaking_style: 说话风格（详细描述，如「说话幽默爱开玩笑」「语气轻松随意」「比较严肃认真」「喜欢用表情包」等）
+- catchphrases: 口头禅列表（找出3-5个最常用的词语、表情或句式，必须是真正反复出现的）
+- interests: 兴趣爱好关键词（从消息内容推断，3-5个关键词）
+- emoji_usage: 表情符号使用习惯描述（如「经常使用可爱表情」「喜欢用emoji表达情绪」「表情使用较少」等）
+
+注意事项：
+1. personality 只需2-4个字，简洁概括
+2. catchphrases 必须是真实出现过的词语或表情，不要猜测
+3. 如果找不到明显口头禅，catchphrases 留空数组
+4. speaking_style 要具体，描述说话方式的特点
 
 请只输出 JSON，不要有其他内容。"""
 
@@ -120,6 +130,8 @@ class PersonaAnalyzer:
         persona['created_at'] = None  # 由 storage 填充
 
         logger.info(f"[人格分析] 画像生成完成: {persona.get('personality', '未知')}")
+        logger.debug(f"[人格分析] 画像详情: 性格={persona.get('personality')}, 风格={persona.get('speaking_style')}")
+        logger.debug(f"[人格分析] 口头禅={persona.get('catchphrases')}, 兴趣={persona.get('interests')}")
 
         return persona
 

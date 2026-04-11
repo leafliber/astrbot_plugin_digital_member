@@ -7,7 +7,7 @@
 
 ## 📖 简介
 
-**数字分身** 是一个 AstrBot 插件，通过分析 QQ 群成员的历史消息，提取其性格特征、说话风格、口头禅等元素，生成独特的「人格画像」。随后，AI 可以基于这个画像，模拟该成员的说话方式进行回复。
+**数字分身** 是一个 AstrBot 插件，通过分析群成员的历史消息，提取其性格特征、说话风格、口头禅等元素，生成独特的「人格画像」。随后，AI 可以基于这个画像，模拟该成员的说话方式进行回复。
 
 简单来说：**让机器人学会像你的群友那样说话！**
 
@@ -18,30 +18,40 @@
 - 💬 **对话记忆** - 每个分身拥有独立的对话历史，支持自动压缩
 - 🔔 **持续唤醒** - 激活后可持续响应，无需每次手动触发
 - 🛡️ **合规机制** - 克隆他人需对方确认，保护用户隐私
-- ⚙️ **灵活配置** - 可自定义 LLM 提供商、时间范围、批次参数等
+- 🌐 **全平台支持** - 支持 QQ、Telegram、Discord、微信等所有 AstrBot 接入的平台
+- ⚙️ **灵活配置** - 可自定义 LLM 提供商、时间范围、参数等
 
 ## 🌟 优势
 
 | 特性 | 说明 |
 |------|------|
+| **全平台兼容** | 依赖 message_recorder 插件，支持所有 AstrBot 平台 |
 | **合规优先** | 克隆他人需要对方在群内确认，确保授权 |
 | **权限控制** | 删除操作仅限管理员、被克隆者、发起者 |
 | **智能压缩** | 对话历史超过阈值自动压缩为摘要，节省资源 |
-| **分批获取** | 自动分批次获取历史消息，避免 API 限速 |
 | **独立存储** | 每个分身的画像和对话独立存储，互不干扰 |
 
 ## 📦 安装
 
-### 方式一：通过 AstrBot 插件商店
+### 前置依赖
 
-在 AstrBot 管理面板的插件市场搜索「数字分身」或「digital_member」，一键安装。
+**必须先安装 `astrbot_plugin_message_recorder` 插件**，本插件依赖它获取历史消息。
 
-### 方式二：手动安装
+1. 在 AstrBot 插件市场搜索「消息记录器」或 `astrbot_plugin_message_recorder`，安装
+2. 确保消息记录器插件正常运行，开始记录群消息
+
+### 安装本插件
+
+**方式一：通过 AstrBot 插件商店**
+
+在 AstrBot 管理面板的插件市场搜索「数字分身」或 `digital_member`，一键安装。
+
+**方式二：手动安装**
 
 ```bash
 # 克隆仓库到 AstrBot 的 addons 目录
 cd astrbot/addons/plugins
-git clone https://github.com/cassia/astrbot_plugin_digital_member.git
+git clone https://github.com/Leafliber/astrbot_plugin_digital_member.git
 ```
 
 重启 AstrBot 即可生效。
@@ -148,8 +158,6 @@ git clone https://github.com/cassia/astrbot_plugin_digital_member.git
 |--------|------|--------|
 | `default_time_range` | 一键克隆默认时间范围 | `30天` |
 | `analyze_provider_id` | 分析画像使用的 LLM 提供商 ID | 空（使用默认） |
-| `batch_size` | API 每批次获取消息数 | `100` |
-| `batch_delay_ms` | 批次间延迟（毫秒） | `300` |
 | `max_analyze_count` | 送入 LLM 的最大消息数 | `500` |
 | `max_history_turns` | 每个分身最大对话轮数 | `20` |
 | `compress_threshold` | 自动压缩触发阈值 | `15` |
@@ -166,14 +174,14 @@ git clone https://github.com/cassia/astrbot_plugin_digital_member.git
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│ 消息收集器   │ --> │ 画像分析器   │ --> │ 对话管理器   │
-│ (批量获取)   │     │ (LLM分析)    │     │ (历史压缩)   │
+│ 消息记录器   │ --> │ 画像分析器   │ --> │ 对话管理器   │
+│ ( recorder ) │     │ (LLM分析)    │     │ (历史压缩)   │
 └─────────────┘     └─────────────┘     └─────────────┘
        ↓                   ↓                   ↓
    群历史消息          人格画像JSON         对话历史
 ```
 
-1. **消息收集**：通过 OneBot11 API 分批获取群历史消息
+1. **消息获取**：通过 `astrbot_plugin_message_recorder` 插件查询历史消息
 2. **画像分析**：LLM 分析消息提取性格、风格、口头禅等特征
 3. **对话生成**：基于画像构建 system prompt，生成风格化回复
 4. **历史压缩**：对话超过阈值自动压缩为摘要，保留关键信息
