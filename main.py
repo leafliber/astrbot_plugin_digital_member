@@ -73,6 +73,68 @@ class Main(Star):
         """群友人格克隆指令组"""
         pass
 
+    @filter.command_group("mbb")
+    def mbb(self):
+        """直接和默认群友对话"""
+        pass
+
+    @mbb.command()
+    async def mbb_chat(self, event: AstrMessageEvent):
+        """直接和默认群友对话
+
+        用法: /mbb 问题内容
+        """
+        group_id = event.message_obj.group_id
+        if not group_id:
+            yield event.plain_result("此功能仅在群聊中可用")
+            return
+
+        default = await self.storage.get_default_persona(group_id)
+        if not default:
+            yield event.plain_result("本群尚未设置默认数字群友\n使用 /mb 默认 @群友 设置")
+            return
+
+        target_qq = default.get("qq")
+        alias = default.get("alias", target_qq)
+
+        question = event.message_str.replace("/mbb", "").strip()
+        if not question:
+            yield event.plain_result(f"请输入要询问 {alias} 的问题")
+            return
+
+        persona = await self.storage.load_persona(target_qq)
+        if not persona:
+            yield event.plain_result(f"未找到 {alias} 的画像，请重新克隆")
+            return
+
+        history = await self.conversation_manager.get_history(target_qq)
+
+        logger.debug(f"[数字群友] mbb询问目标: {alias} (QQ:{target_qq})")
+        logger.debug(f"[数字群友] 问题: {question}")
+
+        prompt = self.prompt_generator.generate(persona, question, history, alias)
+
+        try:
+            umo = event.unified_msg_origin
+            prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+
+            await self.conversation_manager.add_message(target_qq, 'user', question, provider_id=prov_id)
+
+            llm_resp = await self.context.llm_generate(
+                chat_provider_id=prov_id,
+                prompt=prompt,
+            )
+
+            response = llm_resp.completion_text
+
+            await self.conversation_manager.add_message(target_qq, 'assistant', response, provider_id=prov_id)
+
+            yield event.plain_result(response)
+
+        except Exception as e:
+            logger.error(f"[数字群友] mbb AI调用失败: {e}")
+            yield event.plain_result(f"回答生成失败: {e}")
+
     # ===== 分析指令（一键克隆） =====
 
     @mb.command("分析", alias={"analyze"})
@@ -198,15 +260,11 @@ class Main(Star):
                 yield event.plain_result("克隆请求已过期（超过1小时），请重新发起")
                 return
 
-        # 执行克隆
         alias = pending.get("alias", sender_qq)
         time_range_str = pending.get("time_range", self.default_time_range)
         requester_qq = pending.get("requester_qq", "未知")
 
-        # 删除待确认请求
         await self.storage.delete_pending_request(group_id, sender_qq)
-
-        yield event.plain_result(f"✅ 已确认，开始克隆 {alias} 的人格...")
 
         async for result in self._execute_clone(event, sender_qq, alias, time_range_str, requester_qq):
             yield result
@@ -261,16 +319,19 @@ class Main(Star):
             batch_delay_ms=self.batch_delay_ms
         )
         persona['alias'] = alias
-        # 记录发起者（用于权限控制）
         if requester_qq:
             persona['requester_qq'] = requester_qq
         else:
-            # 克隆自己时，发起者就是被克隆者
             persona['requester_qq'] = target_qq
 
-        # 自动保存
         await self.storage.save_persona(target_qq, persona)
         await self.storage.save_alias(alias, target_qq, group_id)
+
+        is_first = not await self.storage.has_default_persona(group_id)
+        if is_first:
+            await self.storage.set_default_persona(group_id, target_qq, alias)
+
+        default_hint = f"\n✨ 已自动设为默认数字群友" if is_first else ""
 
         yield event.plain_result(
             f"✅ 人格克隆完成！\n"
@@ -280,7 +341,7 @@ class Main(Star):
             f"性格: {persona.get('personality', '未知')}\n"
             f"━━━━━━━━━━━━━━━\n"
             f"/mb 询问 {alias} 问题 - 模仿对话\n"
-            f"/mb 唤醒 {alias} - 持续对话"
+            f"/mb 唤醒 {alias} - 持续对话{default_hint}"
         )
 
     # ===== 询问指令 =====
@@ -434,14 +495,14 @@ class Main(Star):
         if not alias:
             alias = await self.storage.get_alias_by_qq(target_qq, group_id) or persona.get('alias', target_qq)
 
-        # 激活会话
         await self.session_manager.activate(group_id, target_qq, alias)
 
         yield event.plain_result(
             f"✅ 已唤醒 {alias}\n"
-            f"现在可以直接发消息，{alias} 会自动回复\n"
-            f"超时 {self.session_timeout} 分钟自动休眠\n"
-            f"使用 /mb 休眠 手动结束"
+            f"━━━━━━━━━━━━━━━\n"
+            f"• @{alias} 或消息包含\"{alias}\"才会回复\n"
+            f"• 超时 {self.session_timeout} 分钟自动休眠\n"
+            f"• 使用 /mb 休眠 手动结束"
         )
 
     # ===== 休眠指令 =====
@@ -531,6 +592,41 @@ class Main(Star):
 
         yield event.plain_result("\n".join(lines))
 
+    @mb.command("默认", alias={"default"})
+    async def set_default(self, event: AstrMessageEvent):
+        """设置本群的默认数字群友
+
+        用法: /mb 默认 @群友/QQ号/代称
+        不带参数时显示当前默认群友
+        """
+        group_id = event.message_obj.group_id
+        if not group_id:
+            yield event.plain_result("此功能仅在群聊中可用")
+            return
+
+        target_qq = await self._parse_target(event, group_id)
+
+        if not target_qq:
+            default = await self.storage.get_default_persona(group_id)
+            if default:
+                qq = default.get("qq")
+                alias = default.get("alias", qq)
+                yield event.plain_result(f"当前默认数字群友: {alias} ({qq})")
+            else:
+                yield event.plain_result("本群尚未设置默认数字群友\n使用 /mb 默认 @群友 设置")
+            return
+
+        persona = await self.storage.load_persona(target_qq)
+        if not persona:
+            alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
+            yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /mb 分析")
+            return
+
+        alias = persona.get('alias', target_qq)
+        await self.storage.set_default_persona(group_id, target_qq, alias)
+
+        yield event.plain_result(f"✅ 已设置 {alias} 为本群的默认数字群友\n使用 /mbb 可直接与其对话")
+
     # ===== 删除指令 =====
 
     @mb.command("删除", alias={"delete", "del"})
@@ -618,11 +714,13 @@ class Main(Star):
             )
             return
 
-        # 删除画像和代称
         await self.storage.delete_persona(target_qq)
         await self.storage.delete_alias(alias, group_id)
 
-        # 如果该群友正在唤醒状态，也要休眠
+        default = await self.storage.get_default_persona(group_id)
+        if default and default.get("qq") == target_qq:
+            await self.storage.clear_default_persona(group_id)
+
         if self.session_manager.is_active(group_id):
             active_qq, _ = self.session_manager.get_active(group_id)
             if active_qq == target_qq:
@@ -664,40 +762,55 @@ class Main(Star):
         """处理群消息，支持持续唤醒模式"""
         group_id = event.message_obj.group_id
 
-        # 检查是否有活跃会话
         session = self.session_manager.get_active(group_id)
         if not session:
-            return  # 无活跃会话，不处理
+            return
+
+        message_text = event.message_str
+        if message_text.startswith("/mb") or message_text.startswith("/群友") or message_text.startswith("/mbb"):
+            return
 
         qq, alias = session
 
-        # 更新活跃时间
         self.session_manager.update_activity(group_id)
 
-        # 获取人格画像
         persona = await self.storage.load_persona(qq)
         if not persona:
             return
 
         alias = persona.get('alias', alias)
 
-        # 获取对话历史
+        message_chain = event.message_obj.message
+        should_respond = False
+        is_at_target = False
+
+        for component in message_chain:
+            if isinstance(component, Comp.At):
+                if str(component.qq) == qq:
+                    should_respond = True
+                    is_at_target = True
+                    break
+
+        if not should_respond:
+            if alias in message_text:
+                should_respond = True
+
+        if not should_respond:
+            return
+
         history = await self.conversation_manager.get_history(qq)
 
         logger.debug(f"[数字群友] 唤醒模式响应: {alias} (QQ:{qq})")
         logger.debug(f"[数字群友] 收到消息: {event.message_str}")
 
-        # 生成 prompt
         prompt = self.prompt_generator.generate(persona, event.message_str, history, alias)
         logger.debug(f"[数字群友] Prompt长度: {len(prompt)}")
 
-        # 调用 AI
         try:
             umo = event.unified_msg_origin
             prov_id = await self.context.get_current_chat_provider_id(umo=umo)
             logger.debug(f"[数字群友] 唤醒模式使用LLM提供商: {prov_id}")
 
-            # 记录用户消息（传入 provider_id 用于后续压缩）
             await self.conversation_manager.add_message(qq, 'user', event.message_str, provider_id=prov_id)
 
             llm_resp = await self.context.llm_generate(
@@ -709,7 +822,6 @@ class Main(Star):
             logger.debug(f"[数字群友] 唤醒模式响应长度: {len(response)}")
             logger.debug(f"[数字群友] 唤醒模式响应预览: {response[:100]}...")
 
-            # 记录回复
             await self.conversation_manager.add_message(qq, 'assistant', response, provider_id=prov_id)
 
             yield event.plain_result(response)
@@ -739,14 +851,11 @@ class Main(Star):
                 # 获取指令后的第一个参数
                 parts = text.split()
                 for part in parts:
-                    # 跳过指令词
-                    if part in ["分析", "询问", "唤醒", "休眠", "画像", "删除", "清空", "列表", "确认", "analyze", "ask", "awake", "sleep", "profile", "delete", "clear", "list", "confirm"]:
+                    if part in ["分析", "询问", "唤醒", "休眠", "画像", "删除", "清空", "列表", "确认", "默认", "analyze", "ask", "awake", "sleep", "profile", "delete", "clear", "list", "confirm", "default"]:
                         continue
-                    # 尝试通过代称查找
                     qq = await self.storage.get_qq_by_alias(part, group_id)
                     if qq:
                         return qq
-                    # 如果是数字，当作 QQ 号
                     if part.isdigit():
                         return part
 

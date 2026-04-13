@@ -242,3 +242,48 @@ class PersonaStorage:
         key = f"pending_{group_id}_{target_qq}"
         await self.star.put_kv_data(key, None)
         logger.info(f"[存储] 已删除待确认请求: 群{group_id} 目标{target_qq}")
+
+    async def set_default_persona(self, group_id: str, qq: str, alias: str):
+        """设置群的默认数字群友
+
+        Args:
+            group_id: 群号
+            qq: 用户 QQ 号
+            alias: 用户代称
+        """
+        key = f"default_persona_{group_id}"
+        await self.star.put_kv_data(key, {"qq": qq, "alias": alias})
+        logger.info(f"[存储] 已设置群 {group_id} 的默认数字群友: {alias}({qq})")
+
+    async def get_default_persona(self, group_id: str) -> dict | None:
+        """获取群的默认数字群友
+
+        Args:
+            group_id: 群号
+
+        Returns:
+            默认群友信息 {"qq": str, "alias": str}，如果不存在则返回 None
+        """
+        key = f"default_persona_{group_id}"
+        return await self.star.get_kv_data(key, None)
+
+    async def has_default_persona(self, group_id: str) -> bool:
+        """检查群是否已设置默认数字群友
+
+        Args:
+            group_id: 群号
+
+        Returns:
+            是否已设置
+        """
+        return await self.get_default_persona(group_id) is not None
+
+    async def clear_default_persona(self, group_id: str):
+        """清除群的默认数字群友
+
+        Args:
+            group_id: 群号
+        """
+        key = f"default_persona_{group_id}"
+        await self.star.put_kv_data(key, None)
+        logger.info(f"[存储] 已清除群 {group_id} 的默认数字群友")
