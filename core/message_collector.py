@@ -114,22 +114,18 @@ class MessageCollector:
         logger.info(f"[消息收集] 开始查询: 用户={sender_id}, 群={group_id}, 时间={time_desc}")
 
         try:
-            # 查询上限：0 表示不限制
-            limit_param = self.query_max_count if self.query_max_count > 0 else None
-
-            # message_recorder 数据库中 sender_id 和 group_id 是 TEXT 类型
-            # 确保传递字符串类型
-            sender_id_str = str(sender_id) if sender_id else None
-            group_id_str = str(group_id) if group_id else None
-
-            # 调用 message_recorder API
-            records = await api.query(
-                sender_id=sender_id_str,
-                group_id=group_id_str,
-                time=time_param,
-                limit=limit_param,
-                order="asc"  # 按时间正序
-            )
+            # 查询上限：0 表示不限制，使用分页查询获取全部
+            # 如果配置了上限则使用配置值
+            if self.query_max_count > 0:
+                limit_param = self.query_max_count
+                records = await self._query_with_limit(
+                    api, sender_id, group_id, time_param, limit_param
+                )
+            else:
+                # 不限制时，分页查询获取全部消息
+                records = await self._query_all_messages(
+                    api, sender_id, group_id, time_param
+                )
 
             logger.info(f"[消息收集] API 返回 {len(records)} 条记录")
 
@@ -301,6 +297,90 @@ class MessageCollector:
         if days is None:
             return "all"  # 全部历史
         return f"last{days}d"  # 如 "last30d", "last7d"
+
+    async def _query_with_limit(
+        self,
+        api,
+        sender_id: str,
+        group_id: str,
+        time_param: str,
+        limit: int
+    ) -> list:
+        """带限制的查询
+
+        Args:
+            api: message_recorder API 实例
+            sender_id: 发送者 ID
+            group_id: 群组 ID
+            time_param: 时间参数
+            limit: 查询上限
+
+        Returns:
+            消息记录列表
+        """
+        sender_id_str = str(sender_id) if sender_id else None
+        group_id_str = str(group_id) if group_id else None
+
+        return await api.query(
+            sender_id=sender_id_str,
+            group_id=group_id_str,
+            time=time_param,
+            limit=limit,
+            order="asc"
+        )
+
+    async def _query_all_messages(
+        self,
+        api,
+        sender_id: str,
+        group_id: str,
+        time_param: str,
+        page_size: int = 500
+    ) -> list:
+        """分页查询获取全部消息
+
+        Args:
+            api: message_recorder API 实例
+            sender_id: 发送者 ID
+            group_id: 群组 ID
+            time_param: 时间参数
+            page_size: 每页数量，默认 500
+
+        Returns:
+            消息记录列表
+        """
+        sender_id_str = str(sender_id) if sender_id else None
+        group_id_str = str(group_id) if group_id else None
+
+        all_records = []
+        offset = 0
+        max_records = 50000  # 安全上限，防止意外查询过多
+
+        while True:
+            records = await api.query(
+                sender_id=sender_id_str,
+                group_id=group_id_str,
+                time=time_param,
+                limit=page_size,
+                offset=offset,
+                order="asc"
+            )
+
+            if not records:
+                break
+
+            all_records.extend(records)
+
+            if len(records) < page_size:
+                break
+
+            offset += page_size
+
+            if len(all_records) >= max_records:
+                logger.warning(f"[消息收集] 已达到安全上限 {max_records} 条，停止查询")
+                break
+
+        return all_records
 
     # 保留旧方法以兼容（如果有其他地方调用）
     async def collect_messages(
