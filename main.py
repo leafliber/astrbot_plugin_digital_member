@@ -25,16 +25,34 @@ class Main(Star):
 
         # 从配置读取参数
         self.default_time_range = config.get("default_time_range", "30天")
-        self.analyze_provider_id = config.get("analyze_provider_id", "")  # 留空使用默认
-        self.max_analyze_count = config.get("max_analyze_count", 500)
-        self.max_history_turns = config.get("max_history_turns", 20)
-        self.compress_threshold = config.get("compress_threshold", 15)
-        self.session_timeout = config.get("session_timeout_minutes", 5)
+        self.analyze_provider_id = config.get("analyze_provider_id", "")
+
+        # 查询配置
+        query_cfg = config.get("query", {})
+        self.query_max_count = query_cfg.get("max_count", 0)
+        self.fetch_context = query_cfg.get("fetch_context", False)
+        self.context_before = query_cfg.get("context_before", 3)
+        self.context_after = query_cfg.get("context_after", 3)
+
+        # 分析配置
+        analysis_cfg = config.get("analysis", {})
+        self.batch_size = analysis_cfg.get("batch_size", 100)
+        self.analysis_mode = analysis_cfg.get("mode", "batch_summarize")
+        self.batch_delay_ms = analysis_cfg.get("batch_delay_ms", 1000)
+
+        # 对话配置
+        conv_cfg = config.get("conversation", {})
+        self.max_history_turns = conv_cfg.get("max_history_turns", 20)
+        self.compress_threshold = conv_cfg.get("compress_threshold", 15)
+        self.session_timeout = conv_cfg.get("session_timeout_minutes", 5)
 
         # 初始化组件
         self.storage = PersonaStorage(self)
         self.message_collector = MessageCollector(
-            max_analyze_count=self.max_analyze_count,
+            query_max_count=self.query_max_count,
+            fetch_context=self.fetch_context,
+            context_before=self.context_before,
+            context_after=self.context_after,
         )
         self.persona_analyzer = PersonaAnalyzer(context)
         self.session_manager = SessionManager(self.session_timeout)
@@ -212,12 +230,12 @@ class Main(Star):
 
         yield event.plain_result(f"正在克隆 {alias} 的人格...\n时间范围: {time_desc}")
 
-        # 使用 message_recorder 收集消息
-        messages = await self.message_collector.collect_messages(
+        # 使用 message_recorder 收集消息（支持上下文）
+        messages = await self.message_collector.collect_messages_with_context(
             context=self.context,
             sender_id=target_qq,
             group_id=group_id,
-            time_range=days
+            time_range=days,
         )
 
         if not messages:
@@ -234,8 +252,14 @@ class Main(Star):
         else:
             logger.debug(f"[人格克隆] 使用配置的提供商: {provider_id}")
 
-        # 自动分析生成画像
-        persona = await self.persona_analyzer.analyze(messages, provider_id=provider_id)
+        # 分析生成画像（支持分批次）
+        persona = await self.persona_analyzer.analyze(
+            messages,
+            provider_id=provider_id,
+            batch_size=self.batch_size,
+            mode=self.analysis_mode,
+            batch_delay_ms=self.batch_delay_ms
+        )
         persona['alias'] = alias
         # 记录发起者（用于权限控制）
         if requester_qq:

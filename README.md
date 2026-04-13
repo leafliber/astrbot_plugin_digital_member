@@ -154,11 +154,38 @@ git clone https://github.com/Leafliber/astrbot_plugin_digital_member.git
 
 在 AstrBot 管理面板的插件配置页面可设置以下参数：
 
+### 基础配置
+
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `default_time_range` | 一键克隆默认时间范围 | `30天` |
 | `analyze_provider_id` | 分析画像使用的 LLM 提供商 ID | 空（使用默认） |
-| `max_analyze_count` | 送入 LLM 的最大消息数 | `500` |
+
+### 消息查询设置 (`query`)
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `max_count` | 查询上限（0=不限制） | `0` |
+| `fetch_context` | 是否获取上下文消息 | `false` |
+| `context_before` | 获取消息前多少条 | `3` |
+| `context_after` | 获取消息后多少条 | `3` |
+
+### 画像分析设置 (`analysis`)
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `batch_size` | 每批次分析消息数 | `100` |
+| `mode` | 分析模式 | `batch_summarize` |
+| `batch_delay_ms` | 批次间延迟（毫秒） | `1000` |
+
+**分析模式说明**：
+- `single`: 取样本一次性分析，可能因上下文过长导致失败
+- `batch_summarize`: 分批次分析后汇总，更稳定可靠
+
+### 对话管理设置 (`conversation`)
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
 | `max_history_turns` | 每个分身最大对话轮数 | `20` |
 | `compress_threshold` | 自动压缩触发阈值 | `15` |
 | `session_timeout_minutes` | 持续唤醒无活动休眠时间 | `5分钟` |
