@@ -15,8 +15,7 @@
   "query": {
     "description": "消息查询设置",
     "type": "object",
-    "default": {},
-    "properties": {
+    "items": {
       "max_count": {
         "description": "查询上限（0=不限制）",
         "type": "int",
@@ -45,8 +44,7 @@
   "analysis": {
     "description": "画像分析设置",
     "type": "object",
-    "default": {},
-    "properties": {
+    "items": {
       "batch_size": {
         "description": "每批次分析消息数",
         "type": "int",
@@ -72,8 +70,7 @@
   "conversation": {
     "description": "对话管理设置",
     "type": "object",
-    "default": {},
-    "properties": {
+    "items": {
       "max_history_turns": {
         "description": "每个人格保留的最大对话轮数",
         "type": "int",
