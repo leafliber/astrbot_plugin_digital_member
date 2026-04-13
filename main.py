@@ -548,14 +548,26 @@ class Main(Star):
 
         alias = persona.get('alias', target_qq)
 
-        # 格式化画像信息
+        typical = persona.get('typical_responses', [])
+        typical_str = ""
+        if typical:
+            typical_lines = [f"  → {t}" for t in typical[:3]]
+            typical_str = f"\n典型发言:\n" + "\n".join(typical_lines)
+
         info = f"""【{alias} 的画像】
 ━━━━━━━━━━━━━━━
 性格: {persona.get('personality', '未知')}
+语气: {persona.get('tone', '平和')}
 风格: {persona.get('speaking_style', '普通')}
+━━━━━━━━━━━━━━━
 口头禅: {', '.join(persona.get('catchphrases', [])) or '无'}
+句式: {persona.get('sentence_pattern', '无明显特点')}
+表情: {persona.get('emoji_usage', '无明显习惯')}
+标点: {persona.get('punctuation', '正常使用')}
+━━━━━━━━━━━━━━━
 兴趣: {', '.join(persona.get('interests', [])) or '无'}
-表情习惯: {persona.get('emoji_usage', '无')}
+情绪: {persona.get('emotional_pattern', '稳定')}
+{persona.get('values', '') and f'价值观: {persona.get("values")}' or ''}{typical_str}
 ━━━━━━━━━━━━━━━
 样本消息: {persona.get('message_count', 0)} 条
 创建时间: {persona.get('created_at', '未知')}"""
