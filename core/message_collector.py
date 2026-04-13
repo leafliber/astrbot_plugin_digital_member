@@ -117,18 +117,15 @@ class MessageCollector:
             # 查询上限：0 表示不限制
             limit_param = self.query_max_count if self.query_max_count > 0 else None
 
-            # 转换 ID 为整数类型（message_recorder 数据库要求）
-            try:
-                sender_id_int = int(sender_id) if sender_id else None
-                group_id_int = int(group_id) if group_id else None
-            except (ValueError, TypeError) as e:
-                logger.error(f"[消息收集] ID 转换失败: sender_id={sender_id}, group_id={group_id}, 错误={e}")
-                return []
+            # message_recorder 数据库中 sender_id 和 group_id 是 TEXT 类型
+            # 确保传递字符串类型
+            sender_id_str = str(sender_id) if sender_id else None
+            group_id_str = str(group_id) if group_id else None
 
             # 调用 message_recorder API
             records = await api.query(
-                sender_id=sender_id_int,
-                group_id=group_id_int,
+                sender_id=sender_id_str,
+                group_id=group_id_str,
                 time=time_param,
                 limit=limit_param,
                 order="asc"  # 按时间正序
