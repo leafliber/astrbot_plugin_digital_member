@@ -96,14 +96,17 @@ class PersonaStorage:
 
     # ===== 文件存储：人物画像（大数据） =====
 
-    async def save_persona(self, qq: str, data: dict):
+    async def save_persona(self, qq: str, group_id: str, data: dict):
         """保存人物画像 - 使用文件存储
 
         Args:
             qq: 用户 QQ 号
+            group_id: 群号
             data: 人格画像数据
         """
-        file_path = self.data_path / f"{qq}.json"
+        file_path = self.data_path / f"{group_id}_{qq}.json"
+        data['qq'] = qq
+        data['group_id'] = group_id
         data['updated_at'] = datetime.now().isoformat()
         if not data.get('created_at'):
             data['created_at'] = datetime.now().isoformat()
@@ -111,73 +114,87 @@ class PersonaStorage:
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-        logger.info(f"[存储] 已保存画像: {qq}")
+        logger.info(f"[存储] 已保存画像: 群{group_id} QQ{qq}")
 
-    async def load_persona(self, qq: str) -> dict | None:
+    async def load_persona(self, qq: str, group_id: str) -> dict | None:
         """加载人物画像
 
         Args:
             qq: 用户 QQ 号
+            group_id: 群号
 
         Returns:
             人格画像字典，如果不存在则返回 None
         """
-        file_path = self.data_path / f"{qq}.json"
+        file_path = self.data_path / f"{group_id}_{qq}.json"
         if file_path.exists():
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except json.JSONDecodeError as e:
-                logger.error(f"[存储] 画像文件解析失败: {qq}, {e}")
+                logger.error(f"[存储] 画像文件解析失败: 群{group_id} QQ{qq}, {e}")
                 return None
         return None
 
-    async def delete_persona(self, qq: str):
+    async def delete_persona(self, qq: str, group_id: str):
         """删除人物画像
 
         Args:
             qq: 用户 QQ 号
+            group_id: 群号
         """
-        file_path = self.data_path / f"{qq}.json"
+        file_path = self.data_path / f"{group_id}_{qq}.json"
         if file_path.exists():
             file_path.unlink()
-            logger.info(f"[存储] 已删除画像: {qq}")
+            logger.info(f"[存储] 已删除画像: 群{group_id} QQ{qq}")
 
-    async def persona_exists(self, qq: str) -> bool:
+    async def persona_exists(self, qq: str, group_id: str) -> bool:
         """检查画像是否存在
 
         Args:
             qq: 用户 QQ 号
+            group_id: 群号
 
         Returns:
             是否存在
         """
-        file_path = self.data_path / f"{qq}.json"
+        file_path = self.data_path / f"{group_id}_{qq}.json"
         return file_path.exists()
 
-    async def list_personas(self) -> list:
-        """列出所有画像
+    async def list_personas(self, group_id: str = None) -> list:
+        """列出画像
+
+        Args:
+            group_id: 群号，为 None 时列出所有画像
 
         Returns:
-            画像列表，每项包含 qq、alias、created_at、message_count
+            画像列表，每项包含 qq、group_id、alias、created_at、message_count
         """
         personas = []
         for file in self.data_path.glob("*.json"):
-            qq = file.stem
             try:
+                filename = file.stem
+                parts = filename.split("_", 1)
+                if len(parts) != 2:
+                    continue
+                file_group_id, qq = parts
+
+                if group_id and file_group_id != group_id:
+                    continue
+
                 with open(file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     personas.append({
                         "qq": qq,
+                        "group_id": file_group_id,
                         "alias": data.get("alias", qq),
                         "created_at": data.get("created_at", ""),
                         "message_count": data.get("message_count", 0),
                         "personality": data.get("personality", "未知"),
                     })
-            except json.JSONDecodeError:
-                logger.warning(f"[存储] 跳过损坏的画像文件: {qq}")
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(f"[存储] 跳过损坏的画像文件: {file.name}")
 
-        # 按创建时间排序
         personas.sort(key=lambda x: x.get('created_at', ''), reverse=True)
         return personas
 
@@ -194,7 +211,7 @@ class PersonaStorage:
         personas = []
 
         for alias, qq in aliases.items():
-            persona = await self.load_persona(qq)
+            persona = await self.load_persona(qq, group_id)
             if persona:
                 personas.append({
                     "qq": qq,

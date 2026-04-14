@@ -108,7 +108,7 @@ class Main(Star):
         """
         group_id = event.message_obj.group_id
 
-        persona = await self.storage.load_persona(target_qq)
+        persona = await self.storage.load_persona(target_qq, group_id)
         if not persona:
             alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
             yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /mb 分析")
@@ -344,7 +344,7 @@ class Main(Star):
         else:
             persona['requester_qq'] = target_qq
 
-        await self.storage.save_persona(target_qq, persona)
+        await self.storage.save_persona(target_qq, group_id, persona)
         await self.storage.save_alias(alias, target_qq, group_id)
 
         is_first = not await self.storage.has_default_persona(group_id)
@@ -452,8 +452,7 @@ class Main(Star):
             yield event.plain_result("请指定要唤醒的群友")
             return
 
-        # 检查画像是否存在
-        persona = await self.storage.load_persona(target_qq)
+        persona = await self.storage.load_persona(target_qq, group_id)
         if not persona:
             if not alias:
                 alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
@@ -508,7 +507,7 @@ class Main(Star):
             yield event.plain_result("请指定要查看的群友")
             return
 
-        persona = await self.storage.load_persona(target_qq)
+        persona = await self.storage.load_persona(target_qq, group_id)
         if not persona:
             alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
             yield event.plain_result(f"未找到 {alias} 的画像")
@@ -596,7 +595,7 @@ class Main(Star):
                 yield event.plain_result("本群尚未设置默认数字群友\n使用 /mb 默认 @群友 设置")
             return
 
-        persona = await self.storage.load_persona(target_qq)
+        persona = await self.storage.load_persona(target_qq, group_id)
         if not persona:
             alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
             yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /mb 分析")
@@ -633,8 +632,7 @@ class Main(Star):
             yield event.plain_result("请指定要删除的群友")
             return
 
-        # 检查画像是否存在
-        persona = await self.storage.load_persona(target_qq)
+        persona = await self.storage.load_persona(target_qq, group_id)
         if not persona:
             alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
             yield event.plain_result(f"未找到 {alias} 的画像")
@@ -694,7 +692,7 @@ class Main(Star):
             )
             return
 
-        await self.storage.delete_persona(target_qq)
+        await self.storage.delete_persona(target_qq, group_id)
         await self.storage.delete_alias(alias, group_id)
 
         default = await self.storage.get_default_persona(group_id)
@@ -724,7 +722,7 @@ class Main(Star):
             yield event.plain_result("请指定要清空历史的群友")
             return
 
-        persona = await self.storage.load_persona(target_qq)
+        persona = await self.storage.load_persona(target_qq, group_id)
         if not persona:
             alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
             yield event.plain_result(f"未找到 {alias} 的画像")
@@ -754,7 +752,7 @@ class Main(Star):
 
         self.session_manager.update_activity(group_id)
 
-        persona = await self.storage.load_persona(qq)
+        persona = await self.storage.load_persona(qq, group_id)
         if not persona:
             return
 
