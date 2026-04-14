@@ -1,11 +1,32 @@
 """
 Prompt 生成器 - 生成带人格上下文的 Prompt
 """
+import re
 from astrbot import logger
 
 
 class PromptGenerator:
     """Prompt 生成器 - 注入人格上下文和历史记录"""
+
+    MSG_SEPARATOR = "[MSG]"
+
+    @staticmethod
+    def split_messages(response: str) -> list[str]:
+        """将 LLM 响应分割为多条消息
+
+        Args:
+            response: LLM 返回的响应文本
+
+        Returns:
+            分割后的消息列表
+        """
+        if not response:
+            return []
+
+        messages = re.split(r'\[MSG\]', response)
+        messages = [msg.strip() for msg in messages if msg.strip()]
+
+        return messages if messages else [response.strip()]
 
     def generate(self, persona: dict, question: str, history: list = None, alias: str = None) -> str:
         """生成带人格上下文和历史记录的 prompt
@@ -38,8 +59,6 @@ class PromptGenerator:
             catchphrase_str = f"，口头禅有「{', '.join(catchphrases[:3])}」"
 
         style_details = []
-        if speaking_style and speaking_style != '正常':
-            style_details.append(speaking_style)
         if tone and tone != '平和':
             style_details.append(f"语气{tone}")
         if sentence_pattern:
@@ -51,7 +70,7 @@ class PromptGenerator:
         if emotional_pattern:
             style_details.append(f"情绪{emotional_pattern}")
 
-        style_summary = '，'.join(style_details) if style_details else '说话风格自然'
+        style_summary = '，'.join(style_details) if style_details else ''
 
         examples_section = ""
         if typical_responses:
@@ -66,6 +85,9 @@ class PromptGenerator:
         values_section = ""
         if values:
             values_section = f"\n- 你{values}，这会影响你对某些话题的态度"
+
+        style_line = f"\n- 说话风格：{speaking_style}" if speaking_style and speaking_style != '正常' else ""
+        extra_style_line = f"\n- 语言习惯：{style_summary}" if style_summary else ""
 
         history_section = ""
         if history:
@@ -89,8 +111,7 @@ class PromptGenerator:
 你是{name}，一个真实存在于这个群里的群友。你有着自己独特的性格和说话方式，就像平时在群里聊天一样。
 
 【你的性格特征】
-- 性格：{personality}{catchphrase_str}
-- 风格：{style_summary}
+- 性格：{personality}{catchphrase_str}{style_line}{extra_style_line}
 - 平时关注的话题：{interests}{values_section}
 {examples_section}
 【回复规则】
@@ -102,11 +123,18 @@ class PromptGenerator:
 6. 回复要简短自然，像群聊消息一样，不要长篇大论
 7. 口头禅要自然使用，不要刻意堆砌
 8. 如果有典型发言示例，参考其风格但不要照抄
+
+【多消息发送规则】
+- 你可以像真人一样连续发送多条消息，每条消息用 [MSG] 分隔
+- 例如：哈哈[MSG]这也太离谱了吧[MSG]笑死我了
+- 每条消息要短，1-3句话即可
+- 根据内容自然拆分，不要刻意为了拆而拆
+- 如果内容简短，也可以只发一条消息（不加 [MSG]）
 {history_section}
 【现在的消息】
 {question}
 
-请用{name}的风格直接回复："""
+请用{name}的风格直接回复（可以用 [MSG] 分隔多条消息）："""
 
         logger.debug(f"[Prompt生成] 代称={name}, 性格={personality}, 风格={style_summary}")
         logger.debug(f"[Prompt生成] 口头禅={catchphrases}, 典型回复数={len(typical_responses)}")

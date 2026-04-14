@@ -73,13 +73,8 @@ class Main(Star):
         """群友人格克隆指令组"""
         pass
 
-    @filter.command_group("mbb")
-    def mbb(self):
-        """直接和默认群友对话"""
-        pass
-
-    @mbb.command()
-    async def mbb_chat(self, event: AstrMessageEvent):
+    @filter.command("mbb")
+    async def mbb(self, event: AstrMessageEvent):
         """直接和默认群友对话
 
         用法: /mbb 问题内容
@@ -95,28 +90,49 @@ class Main(Star):
             return
 
         target_qq = default.get("qq")
-        alias = default.get("alias", target_qq)
-
         question = event.message_str.replace("/mbb", "").strip()
+
+        async for result in self._ask_persona(event, target_qq, question):
+            yield result
+
+    async def _ask_persona(self, event: AstrMessageEvent, target_qq: str, question: str):
+        """向指定人格提问（公共方法）
+
+        Args:
+            event: 消息事件
+            target_qq: 目标人格的 QQ 号
+            question: 问题内容
+
+        Yields:
+            回复消息
+        """
+        group_id = event.message_obj.group_id
+
+        persona = await self.storage.load_persona(target_qq)
+        if not persona:
+            alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
+            yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /mb 分析")
+            return
+
+        alias = persona.get('alias', target_qq)
+
         if not question:
             yield event.plain_result(f"请输入要询问 {alias} 的问题")
             return
 
-        persona = await self.storage.load_persona(target_qq)
-        if not persona:
-            yield event.plain_result(f"未找到 {alias} 的画像，请重新克隆")
-            return
-
         history = await self.conversation_manager.get_history(target_qq)
 
-        logger.debug(f"[数字群友] mbb询问目标: {alias} (QQ:{target_qq})")
+        logger.debug(f"[数字群友] 询问目标: {alias} (QQ:{target_qq})")
         logger.debug(f"[数字群友] 问题: {question}")
+        logger.debug(f"[数字群友] 历史轮数: {len(history)}")
 
         prompt = self.prompt_generator.generate(persona, question, history, alias)
+        logger.debug(f"[数字群友] Prompt长度: {len(prompt)}")
 
         try:
             umo = event.unified_msg_origin
             prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+            logger.debug(f"[数字群友] 使用LLM提供商: {prov_id}")
 
             await self.conversation_manager.add_message(target_qq, 'user', question, provider_id=prov_id)
 
@@ -126,13 +142,17 @@ class Main(Star):
             )
 
             response = llm_resp.completion_text
+            logger.debug(f"[数字群友] LLM响应长度: {len(response)}")
+            logger.debug(f"[数字群友] LLM响应预览: {response[:100]}...")
 
             await self.conversation_manager.add_message(target_qq, 'assistant', response, provider_id=prov_id)
 
-            yield event.plain_result(response)
+            messages = self.prompt_generator.split_messages(response)
+            for msg in messages:
+                yield event.plain_result(msg)
 
         except Exception as e:
-            logger.error(f"[数字群友] mbb AI调用失败: {e}")
+            logger.error(f"[数字群友] AI调用失败: {e}")
             yield event.plain_result(f"回答生成失败: {e}")
 
     # ===== 分析指令（一键克隆） =====
@@ -357,7 +377,6 @@ class Main(Star):
             yield event.plain_result("此功能仅在群聊中可用")
             return
 
-        # 解析用户标识和问题
         message_chain = event.message_obj.message
         target_qq = None
         question_parts = []
@@ -369,14 +388,12 @@ class Main(Star):
                 found_identifier = True
             elif isinstance(component, Comp.Plain):
                 text = component.text.strip()
-                # 跳过指令本身
                 text = text.replace("/mb 询问", "").replace("/群友 询问", "").strip()
 
                 if not found_identifier and text:
                     parts = text.split(maxsplit=1)
                     identifier = parts[0]
 
-                    # 尝试通过代称查找
                     qq = await self.storage.get_qq_by_alias(identifier, group_id)
                     if qq:
                         target_qq = qq
@@ -395,57 +412,8 @@ class Main(Star):
             return
 
         question = " ".join(question_parts)
-        if not question:
-            yield event.plain_result("请输入要询问的问题")
-            return
-
-        # 加载画像
-        persona = await self.storage.load_persona(target_qq)
-        if not persona:
-            alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
-            yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /mb 分析")
-            return
-
-        # 获取代称
-        alias = persona.get('alias', target_qq)
-
-        # 获取人格独立的对话历史
-        history = await self.conversation_manager.get_history(target_qq)
-
-        logger.debug(f"[数字群友] 询问目标: {alias} (QQ:{target_qq})")
-        logger.debug(f"[数字群友] 问题: {question}")
-        logger.debug(f"[数字群友] 历史轮数: {len(history)}")
-
-        # 生成带历史的 prompt
-        prompt = self.prompt_generator.generate(persona, question, history, alias)
-        logger.debug(f"[数字群友] Prompt长度: {len(prompt)}")
-
-        # 直接调用 AI，注入人格上下文
-        try:
-            umo = event.unified_msg_origin
-            prov_id = await self.context.get_current_chat_provider_id(umo=umo)
-            logger.debug(f"[数字群友] 使用LLM提供商: {prov_id}")
-
-            # 记录用户消息（传入 provider_id 用于后续压缩）
-            await self.conversation_manager.add_message(target_qq, 'user', question, provider_id=prov_id)
-
-            llm_resp = await self.context.llm_generate(
-                chat_provider_id=prov_id,
-                prompt=prompt,
-            )
-
-            response = llm_resp.completion_text
-            logger.debug(f"[数字群友] LLM响应长度: {len(response)}")
-            logger.debug(f"[数字群友] LLM响应预览: {response[:100]}...")
-
-            # 记录回复
-            await self.conversation_manager.add_message(target_qq, 'assistant', response, provider_id=prov_id)
-
-            yield event.plain_result(response)
-
-        except Exception as e:
-            logger.error(f"[数字群友] AI调用失败: {e}")
-            yield event.plain_result(f"回答生成失败: {e}")
+        async for result in self._ask_persona(event, target_qq, question):
+            yield result
 
     # ===== 唤醒指令 =====
 
@@ -794,13 +762,11 @@ class Main(Star):
 
         message_chain = event.message_obj.message
         should_respond = False
-        is_at_target = False
 
         for component in message_chain:
             if isinstance(component, Comp.At):
                 if str(component.qq) == qq:
                     should_respond = True
-                    is_at_target = True
                     break
 
         if not should_respond:
@@ -810,36 +776,11 @@ class Main(Star):
         if not should_respond:
             return
 
-        history = await self.conversation_manager.get_history(qq)
-
         logger.debug(f"[数字群友] 唤醒模式响应: {alias} (QQ:{qq})")
         logger.debug(f"[数字群友] 收到消息: {event.message_str}")
 
-        prompt = self.prompt_generator.generate(persona, event.message_str, history, alias)
-        logger.debug(f"[数字群友] Prompt长度: {len(prompt)}")
-
-        try:
-            umo = event.unified_msg_origin
-            prov_id = await self.context.get_current_chat_provider_id(umo=umo)
-            logger.debug(f"[数字群友] 唤醒模式使用LLM提供商: {prov_id}")
-
-            await self.conversation_manager.add_message(qq, 'user', event.message_str, provider_id=prov_id)
-
-            llm_resp = await self.context.llm_generate(
-                chat_provider_id=prov_id,
-                prompt=prompt,
-            )
-
-            response = llm_resp.completion_text
-            logger.debug(f"[数字群友] 唤醒模式响应长度: {len(response)}")
-            logger.debug(f"[数字群友] 唤醒模式响应预览: {response[:100]}...")
-
-            await self.conversation_manager.add_message(qq, 'assistant', response, provider_id=prov_id)
-
-            yield event.plain_result(response)
-
-        except Exception as e:
-            logger.error(f"[数字群友] 持续唤醒回复失败: {e}")
+        async for result in self._ask_persona(event, qq, event.message_str):
+            yield result
 
     # ===== 辅助方法 =====
 
