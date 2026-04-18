@@ -398,7 +398,7 @@ class Main(Star):
 
     # ===== 询问指令 =====
 
-    @mb.command("询问", alias={"ask"})
+    @mb.command("询问", alias={"ask", "对话", "聊天", "talk", "chat"})
     async def ask(self, event: AstrMessageEvent):
         """模仿群友回答问题
 
@@ -420,7 +420,9 @@ class Main(Star):
                 found_identifier = True
             elif isinstance(component, Comp.Plain):
                 text = component.text.strip()
-                text = text.replace("/mb 询问", "").replace("/群友 询问", "").strip()
+                for cmd in ["询问", "ask", "对话", "聊天", "talk", "chat"]:
+                    text = text.replace(f"/mb {cmd}", "").replace(f"/群友 {cmd}", "")
+                text = text.strip()
 
                 if not found_identifier and text:
                     parts = text.split(maxsplit=1)
