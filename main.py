@@ -2,6 +2,9 @@
 数字群友插件 - AstrBot 插件主入口
 功能：分析群友历史消息，生成说话风格和个人画像，支持模仿群友进行交流
 """
+import asyncio
+import random
+
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
 from astrbot.api import AstrBotConfig
@@ -65,6 +68,33 @@ class Main(Star):
         )
 
         logger.info("[数字群友] 插件已加载")
+
+    def _calculate_delay(self, text: str) -> float:
+        """根据消息字数计算延迟时间（模拟真人打字）"""
+        char_count = len(text)
+        base_delay = char_count * random.uniform(0.03, 0.08)
+        random_offset = random.uniform(0.3, 1.5)
+        return min(base_delay + random_offset, 5.0)
+
+    async def _send_segmented_messages(self, event: AstrMessageEvent, messages: list[str]):
+        """分段发送消息：第一条回复，后续直接发送，带延迟"""
+        if not messages:
+            return
+
+        yield event.plain_result(messages[0])
+
+        if len(messages) <= 1:
+            return
+
+        from astrbot.api.event import MessageChain
+        umo = event.unified_msg_origin
+
+        for msg in messages[1:]:
+            delay = self._calculate_delay(msg)
+            logger.debug(f"[数字群友] 延迟 {delay:.2f}s 后发送下一条消息")
+            await asyncio.sleep(delay)
+            chain = MessageChain().message(msg)
+            await self.context.send_message(umo, chain)
 
     # ===== 指令组注册 =====
 
@@ -148,8 +178,8 @@ class Main(Star):
             await self.conversation_manager.add_message(target_qq, group_id, 'assistant', response, provider_id=prov_id)
 
             messages = self.prompt_generator.split_messages(response)
-            for msg in messages:
-                yield event.plain_result(msg)
+            async for result in self._send_segmented_messages(event, messages):
+                yield result
 
         except Exception as e:
             logger.error(f"[数字群友] AI调用失败: {e}")
