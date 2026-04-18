@@ -841,17 +841,30 @@ class Main(Star):
         """处理群消息，支持持续唤醒模式"""
         group_id = event.message_obj.group_id
 
+        message_text = event.message_str.strip()
+        if not message_text or message_text.startswith("/"):
+            logger.debug(f"[数字群友] 跳过指令消息: {message_text[:50]}...")
+            return
+
         session = self.session_manager.get_active(group_id)
-        if not session:
-            return
+        qq, alias = None, None
 
-        message_text = event.message_str
-        if message_text.startswith("/"):
-            return
+        if session:
+            qq, alias = session
 
-        qq, alias = session
+            if message_text.startswith(f"[{alias}]"):
+                logger.debug(f"[数字群友] 拦截本插件消息，阻止默认处理: {message_text[:50]}...")
+                event.stop_event()
+                return
 
-        self.session_manager.update_activity(group_id)
+            self.session_manager.update_activity(group_id)
+        else:
+            reply_persona = await self._check_reply_to_persona(event, group_id)
+            if reply_persona:
+                qq, alias = reply_persona
+                logger.debug(f"[数字群友] 检测到回复人格消息: {alias}")
+            else:
+                return
 
         persona = await self.storage.load_persona(qq, group_id)
         if not persona:
@@ -872,6 +885,9 @@ class Main(Star):
             if alias in message_text:
                 should_respond = True
 
+        if not should_respond and session:
+            should_respond = True
+
         if not should_respond:
             return
 
@@ -880,6 +896,44 @@ class Main(Star):
 
         async for result in self._ask_persona(event, qq, event.message_str):
             yield result
+
+        event.stop_event()
+
+    async def _check_reply_to_persona(self, event: AstrMessageEvent, group_id: str) -> tuple[str, str] | None:
+        """检查消息是否是回复本插件发送的人格消息
+
+        Args:
+            event: 消息事件
+            group_id: 群号
+
+        Returns:
+            (qq, alias) 如果是回复人格消息，否则 None
+        """
+        message_chain = event.message_obj.message
+
+        for component in message_chain:
+            if isinstance(component, Comp.Reply):
+                try:
+                    reply_message = component.message
+                    if reply_message:
+                        reply_text = ""
+                        for seg in reply_message:
+                            if isinstance(seg, Comp.Plain):
+                                reply_text += seg.text
+
+                        reply_text = reply_text.strip()
+                        if reply_text.startswith("[") and "]" in reply_text:
+                            end_idx = reply_text.index("]")
+                            alias_in_reply = reply_text[1:end_idx]
+
+                            all_personas = await self.storage.list_personas(group_id)
+                            for p in all_personas:
+                                if p.get("alias") == alias_in_reply:
+                                    return p.get("qq"), alias_in_reply
+                except Exception as e:
+                    logger.debug(f"[数字群友] 解析回复消息失败: {e}")
+
+        return None
 
     # ===== 辅助方法 =====
 
