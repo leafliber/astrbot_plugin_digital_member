@@ -21,40 +21,41 @@ class PersonaConversationManager:
     ):
         self.storage = storage
         self.context = context
-        self.MAX_HISTORY_TURNS = max_turns        # 最大保留对话轮数
-        self.COMPRESS_THRESHOLD = compress_threshold  # 触发压缩的阈值
-        self.SUMMARY_TURNS = summary_turns        # 压缩时保留的最近轮数
-        self._current_provider_id = None          # 当前使用的提供商 ID
+        self.MAX_HISTORY_TURNS = max_turns
+        self.COMPRESS_THRESHOLD = compress_threshold
+        self.SUMMARY_TURNS = summary_turns
+        self._current_provider_id = None
 
-    async def get_history(self, qq: str) -> list:
+    async def get_history(self, qq: str, group_id: str) -> list:
         """获取人格的对话历史
 
         Args:
             qq: 用户 QQ 号
+            group_id: 群号
 
         Returns:
             对话历史列表
         """
-        persona = await self.storage.load_persona(qq)
+        persona = await self.storage.load_persona(qq, group_id)
         if persona and 'conversation_history' in persona:
             return persona['conversation_history']
         return []
 
-    async def add_message(self, qq: str, role: str, content: str, provider_id: str = None):
+    async def add_message(self, qq: str, group_id: str, role: str, content: str, provider_id: str = None):
         """添加消息到对话历史
 
         Args:
             qq: 用户 QQ 号
+            group_id: 群号
             role: 角色（user/assistant/system）
             content: 消息内容
             provider_id: 当前使用的 LLM 提供商 ID（用于后续压缩摘要）
         """
-        persona = await self.storage.load_persona(qq)
+        persona = await self.storage.load_persona(qq, group_id)
         if not persona:
-            logger.warning(f"[人格对话] 未找到用户 {qq} 的画像")
+            logger.warning(f"[人格对话] 未找到用户 {qq} 在群 {group_id} 的画像")
             return
 
-        # 保存当前的 provider_id 用于压缩摘要
         if provider_id:
             self._current_provider_id = provider_id
 
@@ -67,42 +68,41 @@ class PersonaConversationManager:
             'timestamp': datetime.now().isoformat()
         })
 
-        # 检查是否需要压缩
         if len(persona['conversation_history']) >= self.COMPRESS_THRESHOLD * 2:
-            await self._compress_history(qq, persona)
+            await self._compress_history(qq, group_id, persona)
+        else:
+            await self.storage.save_persona(qq, group_id, persona)
 
-        await self.storage.save_persona(qq, persona)
-
-    async def _compress_history(self, qq: str, persona: dict):
+    async def _compress_history(self, qq: str, group_id: str, persona: dict):
         """
         自动压缩对话历史
         将旧对话压缩为摘要，保留最近的对话
 
         Args:
             qq: 用户 QQ 号
+            group_id: 群号
             persona: 人格画像字典
         """
         history = persona.get('conversation_history', [])
         if len(history) < self.COMPRESS_THRESHOLD * 2:
             return
 
-        # 分离旧对话和最近对话
         old_messages = history[:-self.SUMMARY_TURNS * 2]
         recent_messages = history[-self.SUMMARY_TURNS * 2:]
 
         if not old_messages:
             return
 
-        # 生成旧对话摘要
         summary = await self._generate_summary(old_messages)
 
-        # 更新历史：摘要 + 最近对话
         persona['conversation_history'] = [
             {'role': 'system', 'content': f'[历史摘要] {summary}', 'timestamp': datetime.now().isoformat()}
         ] + recent_messages
 
         persona['last_compressed'] = datetime.now().isoformat()
-        logger.info(f"[人格对话] 已压缩 {qq} 的对话历史，从 {len(history)} 条压缩到 {len(persona['conversation_history'])} 条")
+        logger.info(f"[人格对话] 已压缩 {qq} 在群 {group_id} 的对话历史，从 {len(history)} 条压缩到 {len(persona['conversation_history'])} 条")
+
+        await self.storage.save_persona(qq, group_id, persona)
 
     async def _generate_summary(self, messages: list) -> str:
         """使用 AI 生成对话摘要
@@ -113,7 +113,6 @@ class PersonaConversationManager:
         Returns:
             摘要文本
         """
-        # 构造对话文本
         conversation_text = "\n".join([
             f"{'用户' if m['role'] == 'user' else '回复'}: {m.get('content', '')}"
             for m in messages
@@ -137,7 +136,6 @@ class PersonaConversationManager:
                 )
                 return llm_resp.completion_text.strip()
             else:
-                # 无 context 时，简单截取关键信息
                 return self._simple_summary(messages)
         except Exception as e:
             logger.error(f"[人格对话] 摘要生成失败: {e}")
@@ -156,32 +154,33 @@ class PersonaConversationManager:
         topic_count = len(user_msgs)
         return f"用户共发起{topic_count}次对话，涵盖日常交流话题"
 
-    async def clear_history(self, qq: str):
+    async def clear_history(self, qq: str, group_id: str):
         """清空对话历史
 
         Args:
             qq: 用户 QQ 号
+            group_id: 群号
         """
-        persona = await self.storage.load_persona(qq)
+        persona = await self.storage.load_persona(qq, group_id)
         if persona:
             persona['conversation_history'] = []
-            await self.storage.save_persona(qq, persona)
-            logger.info(f"[人格对话] 已清空 {qq} 的对话历史")
+            await self.storage.save_persona(qq, group_id, persona)
+            logger.info(f"[人格对话] 已清空 {qq} 在群 {group_id} 的对话历史")
 
-    async def get_history_summary(self, qq: str) -> str:
+    async def get_history_summary(self, qq: str, group_id: str) -> str:
         """获取对话历史的简要描述
 
         Args:
             qq: 用户 QQ 号
+            group_id: 群号
 
         Returns:
             历史简要描述
         """
-        history = await self.get_history(qq)
+        history = await self.get_history(qq, group_id)
         if not history:
             return "无对话历史"
 
-        # 统计
         user_count = len([m for m in history if m['role'] == 'user'])
         assistant_count = len([m for m in history if m['role'] == 'assistant'])
         system_count = len([m for m in history if m['role'] == 'system'])

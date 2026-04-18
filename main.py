@@ -120,7 +120,7 @@ class Main(Star):
             yield event.plain_result(f"请输入要询问 {alias} 的问题")
             return
 
-        history = await self.conversation_manager.get_history(target_qq)
+        history = await self.conversation_manager.get_history(target_qq, group_id)
 
         logger.debug(f"[数字群友] 询问目标: {alias} (QQ:{target_qq})")
         logger.debug(f"[数字群友] 问题: {question}")
@@ -134,7 +134,7 @@ class Main(Star):
             prov_id = await self.context.get_current_chat_provider_id(umo=umo)
             logger.debug(f"[数字群友] 使用LLM提供商: {prov_id}")
 
-            await self.conversation_manager.add_message(target_qq, 'user', question, provider_id=prov_id)
+            await self.conversation_manager.add_message(target_qq, group_id, 'user', question, provider_id=prov_id)
 
             llm_resp = await self.context.llm_generate(
                 chat_provider_id=prov_id,
@@ -145,7 +145,7 @@ class Main(Star):
             logger.debug(f"[数字群友] LLM响应长度: {len(response)}")
             logger.debug(f"[数字群友] LLM响应预览: {response[:100]}...")
 
-            await self.conversation_manager.add_message(target_qq, 'assistant', response, provider_id=prov_id)
+            await self.conversation_manager.add_message(target_qq, group_id, 'assistant', response, provider_id=prov_id)
 
             messages = self.prompt_generator.split_messages(response)
             for msg in messages:
@@ -539,8 +539,7 @@ class Main(Star):
 样本消息: {persona.get('message_count', 0)} 条
 创建时间: {persona.get('created_at', '未知')}"""
 
-        # 添加对话历史信息
-        history_info = await self.conversation_manager.get_history_summary(target_qq)
+        history_info = await self.conversation_manager.get_history_summary(target_qq, group_id)
         info += f"\n对话历史: {history_info}"
 
         yield event.plain_result(info)
@@ -729,7 +728,7 @@ class Main(Star):
             return
 
         alias = persona.get('alias', target_qq)
-        await self.conversation_manager.clear_history(target_qq)
+        await self.conversation_manager.clear_history(target_qq, group_id)
 
         yield event.plain_result(f"已清空 {alias} 的对话历史")
 
