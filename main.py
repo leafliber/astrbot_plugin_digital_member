@@ -76,12 +76,13 @@ class Main(Star):
         random_offset = random.uniform(0.3, 1.5)
         return min(base_delay + random_offset, 5.0)
 
-    async def _send_segmented_messages(self, event: AstrMessageEvent, messages: list[str]):
+    async def _send_segmented_messages(self, event: AstrMessageEvent, messages: list[str], alias: str):
         """分段发送消息：第一条回复，后续直接发送，带延迟"""
         if not messages:
             return
 
-        yield event.plain_result(messages[0])
+        first_msg = f"[{alias}]{messages[0]}"
+        yield event.plain_result(first_msg)
 
         if len(messages) <= 1:
             return
@@ -93,7 +94,8 @@ class Main(Star):
             delay = self._calculate_delay(msg)
             logger.debug(f"[数字群友] 延迟 {delay:.2f}s 后发送下一条消息")
             await asyncio.sleep(delay)
-            chain = MessageChain().message(msg)
+            full_msg = f"[{alias}]{msg}"
+            chain = MessageChain().message(full_msg)
             await self.context.send_message(umo, chain)
 
     # ===== 指令组注册 =====
@@ -178,7 +180,7 @@ class Main(Star):
             await self.conversation_manager.add_message(target_qq, group_id, 'assistant', response, provider_id=prov_id)
 
             messages = self.prompt_generator.split_messages(response)
-            async for result in self._send_segmented_messages(event, messages):
+            async for result in self._send_segmented_messages(event, messages, alias):
                 yield result
 
         except Exception as e:
