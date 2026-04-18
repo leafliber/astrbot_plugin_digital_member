@@ -762,6 +762,68 @@ class Main(Star):
 
         yield event.plain_result(f"已清空 {alias} 的对话历史")
 
+    # ===== 称呼指令 =====
+
+    @mb.command("称呼", alias={"rename", "alias"})
+    async def rename_persona(self, event: AstrMessageEvent):
+        """修改群友的称呼
+
+        用法: /mb 称呼 @群友/QQ号/原昵称 新昵称
+        """
+        group_id = event.message_obj.group_id
+        if not group_id:
+            yield event.plain_result("此功能仅在群聊中可用")
+            return
+
+        message_text = event.message_str
+        text = message_text.replace("/mb 称呼", "").replace("/群友 称呼", "").strip()
+        text = text.replace("/mb rename", "").replace("/群友 rename", "").strip()
+        text = text.replace("/mb alias", "").replace("/群友 alias", "").strip()
+
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            yield event.plain_result("请指定目标和新的称呼\n用法: /mb 称呼 @群友/QQ号/原昵称 新昵称")
+            return
+
+        target_str, new_alias = parts[0], parts[1].strip()
+
+        target_qq = None
+        old_alias = None
+
+        for component in event.message_obj.message:
+            if isinstance(component, Comp.At):
+                target_qq = str(component.qq)
+                break
+
+        if not target_qq:
+            if target_str.isdigit():
+                target_qq = target_str
+            else:
+                target_qq = await self.storage.get_qq_by_alias(target_str, group_id)
+                if target_qq:
+                    old_alias = target_str
+
+        if not target_qq:
+            yield event.plain_result(f"未找到 {target_str}，请使用 @群友、QQ号 或原昵称")
+            return
+
+        persona = await self.storage.load_persona(target_qq, group_id)
+        if not persona:
+            yield event.plain_result(f"未找到 {target_str} 的画像，请先使用 /mb 分析")
+            return
+
+        if not old_alias:
+            old_alias = persona.get('alias', target_qq)
+
+        existing_qq = await self.storage.get_qq_by_alias(new_alias, group_id)
+        if existing_qq and existing_qq != target_qq:
+            yield event.plain_result(f"称呼「{new_alias}」已被其他群友使用")
+            return
+
+        await self.storage.update_alias(old_alias, new_alias, target_qq, group_id)
+
+        yield event.plain_result(f"✅ 已将 {old_alias} 的称呼改为 {new_alias}")
+
     # ===== 群消息监听（持续唤醒） =====
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)

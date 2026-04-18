@@ -94,6 +94,34 @@ class PersonaStorage:
             await self.star.put_kv_data(key, aliases)
             logger.info(f"[存储] 已删除代称映射: {alias} (群 {group_id})")
 
+    async def update_alias(self, old_alias: str, new_alias: str, qq: str, group_id: str):
+        """更新代称
+
+        Args:
+            old_alias: 原代称
+            new_alias: 新代称
+            qq: 用户 QQ 号
+            group_id: 群号
+        """
+        key = f"alias_{group_id}"
+        aliases = await self.star.get_kv_data(key, {})
+
+        if old_alias in aliases:
+            del aliases[old_alias]
+        aliases[new_alias] = qq
+        await self.star.put_kv_data(key, aliases)
+
+        persona = await self.load_persona(qq, group_id)
+        if persona:
+            persona['alias'] = new_alias
+            await self.save_persona(qq, group_id, persona)
+
+        default = await self.get_default_persona(group_id)
+        if default and default.get("qq") == qq:
+            await self.set_default_persona(group_id, qq, new_alias)
+
+        logger.info(f"[存储] 已更新代称: {old_alias} -> {new_alias} (群 {group_id})")
+
     # ===== 文件存储：人物画像（大数据） =====
 
     async def save_persona(self, qq: str, group_id: str, data: dict):
