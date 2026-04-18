@@ -774,7 +774,7 @@ class Main(Star):
             return
 
         message_text = event.message_str
-        if message_text.startswith("/mb") or message_text.startswith("/群友") or message_text.startswith("/mbb"):
+        if message_text.startswith("/"):
             return
 
         qq, alias = session
