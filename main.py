@@ -779,45 +779,51 @@ class Main(Star):
             yield event.plain_result("此功能仅在群聊中可用")
             return
 
-        message_text = event.message_str
-        text = message_text.replace("/mb 称呼", "").replace("/群友 称呼", "").strip()
-        text = text.replace("/mb rename", "").replace("/群友 rename", "").strip()
-        text = text.replace("/mb alias", "").replace("/群友 alias", "").strip()
+        target_qq = None
+        new_alias = None
 
+        message_chain = event.message_obj.message
+        text_parts = []
+
+        for component in message_chain:
+            if isinstance(component, Comp.At):
+                if target_qq is None:
+                    target_qq = str(component.qq)
+            elif isinstance(component, Comp.Plain):
+                text = component.text.strip()
+                for cmd in ["称呼", "rename", "alias"]:
+                    text = text.replace(f"/mb {cmd}", "").replace(f"/群友 {cmd}", "")
+                if text.strip():
+                    text_parts.append(text.strip())
+
+        text = " ".join(text_parts).strip()
         parts = text.split(maxsplit=1)
-        if len(parts) < 2:
-            yield event.plain_result("请指定目标和新的称呼\n用法: /mb 称呼 @群友/QQ号/原昵称 新昵称")
+
+        if target_qq:
+            if len(parts) >= 1:
+                new_alias = parts[0]
+        else:
+            if len(parts) >= 2:
+                target_str, new_alias = parts[0], parts[1]
+                if target_str.isdigit():
+                    target_qq = target_str
+                else:
+                    target_qq = await self.storage.get_qq_by_alias(target_str, group_id)
+
+        if not target_qq:
+            yield event.plain_result("请指定目标群友（@群友、QQ号 或原昵称）")
             return
 
-        target_str, new_alias = parts[0], parts[1].strip()
-
-        target_qq = None
-        old_alias = None
-
-        for component in event.message_obj.message:
-            if isinstance(component, Comp.At):
-                target_qq = str(component.qq)
-                break
-
-        if not target_qq:
-            if target_str.isdigit():
-                target_qq = target_str
-            else:
-                target_qq = await self.storage.get_qq_by_alias(target_str, group_id)
-                if target_qq:
-                    old_alias = target_str
-
-        if not target_qq:
-            yield event.plain_result(f"未找到 {target_str}，请使用 @群友、QQ号 或原昵称")
+        if not new_alias:
+            yield event.plain_result("请指定新的称呼\n用法: /mb 称呼 @群友/QQ号/原昵称 新昵称")
             return
 
         persona = await self.storage.load_persona(target_qq, group_id)
         if not persona:
-            yield event.plain_result(f"未找到 {target_str} 的画像，请先使用 /mb 分析")
+            yield event.plain_result(f"未找到该群友的画像，请先使用 /mb 分析")
             return
 
-        if not old_alias:
-            old_alias = persona.get('alias', target_qq)
+        old_alias = persona.get('alias', target_qq)
 
         existing_qq = await self.storage.get_qq_by_alias(new_alias, group_id)
         if existing_qq and existing_qq != target_qq:
