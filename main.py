@@ -855,6 +855,7 @@ class Main(Star):
 
         session = self.session_manager.get_active(group_id)
         qq, alias = None, None
+        is_reply_to_persona = False
 
         if session:
             qq, alias = session
@@ -869,6 +870,7 @@ class Main(Star):
             reply_persona = await self._check_reply_to_persona(event, group_id)
             if reply_persona:
                 qq, alias = reply_persona
+                is_reply_to_persona = True
                 logger.debug(f"[数字群友] 检测到回复人格消息: {alias}")
             else:
                 return
@@ -879,18 +881,21 @@ class Main(Star):
 
         alias = persona.get('alias', alias)
 
-        message_chain = event.message_obj.message
-        should_respond = False
+        if is_reply_to_persona:
+            should_respond = True
+        else:
+            message_chain = event.message_obj.message
+            should_respond = False
 
-        for component in message_chain:
-            if isinstance(component, Comp.At):
-                if str(component.qq) == qq:
+            for component in message_chain:
+                if isinstance(component, Comp.At):
+                    if str(component.qq) == qq:
+                        should_respond = True
+                        break
+
+            if not should_respond:
+                if alias in message_text:
                     should_respond = True
-                    break
-
-        if not should_respond:
-            if alias in message_text:
-                should_respond = True
 
         if not should_respond:
             return
@@ -918,36 +923,17 @@ class Main(Star):
         for component in message_chain:
             if isinstance(component, Comp.Reply):
                 try:
-                    logger.debug(f"[数字群友] 检测到 Reply 组件: {component}")
-                    logger.debug(f"[数字群友] Reply 组件属性: {dir(component)}")
+                    reply_text = component.text or component.message_str or ""
+                    reply_text = reply_text.strip()
 
-                    reply_text = None
+                    if reply_text.startswith("[") and "]" in reply_text:
+                        end_idx = reply_text.index("]")
+                        alias_in_reply = reply_text[1:end_idx]
 
-                    if hasattr(component, 'message') and component.message:
-                        for seg in component.message:
-                            if isinstance(seg, Comp.Plain):
-                                reply_text = (reply_text or "") + seg.text
-                    elif hasattr(component, 'chain') and component.chain:
-                        for seg in component.chain:
-                            if isinstance(seg, Comp.Plain):
-                                reply_text = (reply_text or "") + seg.text
-                    elif hasattr(component, 'text') and component.text:
-                        reply_text = component.text
-                    elif hasattr(component, 'selected_text') and component.selected_text:
-                        reply_text = component.selected_text
-
-                    if reply_text:
-                        reply_text = reply_text.strip()
-                        logger.debug(f"[数字群友] 被回复消息文本: {reply_text[:50]}...")
-
-                        if reply_text.startswith("[") and "]" in reply_text:
-                            end_idx = reply_text.index("]")
-                            alias_in_reply = reply_text[1:end_idx]
-
-                            all_personas = await self.storage.list_personas(group_id)
-                            for p in all_personas:
-                                if p.get("alias") == alias_in_reply:
-                                    return p.get("qq"), alias_in_reply
+                        all_personas = await self.storage.list_personas(group_id)
+                        for p in all_personas:
+                            if p.get("alias") == alias_in_reply:
+                                return p.get("qq"), alias_in_reply
                 except Exception as e:
                     logger.warning(f"[数字群友] 解析回复消息失败: {e}")
 
