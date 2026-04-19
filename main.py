@@ -72,9 +72,9 @@ class Main(Star):
     def _calculate_delay(self, text: str) -> float:
         """根据消息字数计算延迟时间（模拟真人打字）"""
         char_count = len(text)
-        base_delay = char_count * random.uniform(0.03, 0.08)
-        random_offset = random.uniform(0.3, 1.5)
-        return min(base_delay + random_offset, 5.0)
+        base_delay = char_count * random.uniform(0.08, 0.15)
+        random_offset = random.uniform(1.0, 3.0)
+        return min(base_delay + random_offset, 8.0)
 
     async def _send_segmented_messages(self, event: AstrMessageEvent, messages: list[str], alias: str):
         """分段发送消息：第一条回复，后续直接发送，带延迟"""
@@ -499,11 +499,10 @@ class Main(Star):
         await self.session_manager.activate(group_id, target_qq, alias)
 
         yield event.plain_result(
-            f"✅ 已唤醒 {alias}\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"• @{alias} 或消息包含\"{alias}\"才会回复\n"
-            f"• 超时 {self.session_timeout} 分钟自动休眠\n"
-            f"• 使用 /mb 休眠 手动结束"
+            f"✅ 已唤醒 {alias}\n\n"
+            f"▸ @{alias} 或消息包含 \"{alias}\" 才会回复\n"
+            f"▸ 超时 {self.session_timeout} 分钟自动休眠\n"
+            f"▸ 使用 /mb 休眠 手动结束"
         )
 
     # ===== 休眠指令 =====
@@ -552,29 +551,35 @@ class Main(Star):
         typical = persona.get('typical_responses', [])
         typical_str = ""
         if typical:
-            typical_lines = [f"  → {t}" for t in typical[:3]]
-            typical_str = f"\n典型发言:\n" + "\n".join(typical_lines)
+            typical_lines = [f"  {i+1}. {t}" for i, t in enumerate(typical[:3])]
+            typical_str = "\n\n【典型发言】\n" + "\n".join(typical_lines)
+
+        values_str = ""
+        if persona.get('values'):
+            values_str = f"\n\n【价值观】\n{persona.get('values')}"
 
         info = f"""【{alias} 的画像】
-━━━━━━━━━━━━━━━
-性格: {persona.get('personality', '未知')}
-语气: {persona.get('tone', '平和')}
-风格: {persona.get('speaking_style', '普通')}
-━━━━━━━━━━━━━━━
-口头禅: {', '.join(persona.get('catchphrases', [])) or '无'}
-句式: {persona.get('sentence_pattern', '无明显特点')}
-表情: {persona.get('emoji_usage', '无明显习惯')}
-标点: {persona.get('punctuation', '正常使用')}
-━━━━━━━━━━━━━━━
-兴趣: {', '.join(persona.get('interests', [])) or '无'}
-情绪: {persona.get('emotional_pattern', '稳定')}
-{persona.get('values', '') and f'价值观: {persona.get("values")}' or ''}{typical_str}
-━━━━━━━━━━━━━━━
-样本消息: {persona.get('message_count', 0)} 条
-创建时间: {persona.get('created_at', '未知')}"""
+
+▸ 性格: {persona.get('personality', '未知')}
+▸ 语气: {persona.get('tone', '平和')}
+▸ 风格: {persona.get('speaking_style', '普通')}
+
+【语言习惯】
+▸ 口头禅: {', '.join(persona.get('catchphrases', [])) or '无'}
+▸ 句式: {persona.get('sentence_pattern', '无明显特点')}
+▸ 表情: {persona.get('emoji_usage', '无明显习惯')}
+▸ 标点: {persona.get('punctuation', '正常使用')}
+
+【其他特征】
+▸ 兴趣: {', '.join(persona.get('interests', [])) or '无'}
+▸ 情绪: {persona.get('emotional_pattern', '稳定')}{values_str}{typical_str}
+
+【统计信息】
+▸ 样本消息: {persona.get('message_count', 0)} 条
+▸ 创建时间: {persona.get('created_at', '未知')}"""
 
         history_info = await self.conversation_manager.get_history_summary(target_qq, group_id)
-        info += f"\n对话历史: {history_info}"
+        info += f"\n▸ 对话历史: {history_info}"
 
         yield event.plain_result(info)
 
@@ -594,13 +599,15 @@ class Main(Star):
             yield event.plain_result("本群还没有克隆任何群友\n使用 /mb 分析 @群友 代称 开始克隆")
             return
 
-        lines = ["【本群已克隆的群友】", "━━━━━━━━━━━━━━━"]
-        for p in personas:
-            lines.append(f"{p['alias']} ({p['qq']})")
-            lines.append(f"  性格: {p['personality']}, 样本: {p['message_count']}条")
+        lines = [f"【本群已克隆的群友】\n"]
+        for i, p in enumerate(personas, 1):
+            lines.append(f"{i}. {p['alias']}")
+            lines.append(f"   性格: {p['personality']}")
+            lines.append(f"   样本: {p['message_count']} 条消息")
+            if i < len(personas):
+                lines.append("")
 
-        lines.append("━━━━━━━━━━━━━━━")
-        lines.append(f"共 {len(personas)} 个")
+        lines.append(f"\n共 {len(personas)} 个群友")
 
         yield event.plain_result("\n".join(lines))
 
