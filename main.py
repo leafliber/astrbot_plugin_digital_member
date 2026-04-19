@@ -918,14 +918,28 @@ class Main(Star):
         for component in message_chain:
             if isinstance(component, Comp.Reply):
                 try:
-                    reply_message = component.message
-                    if reply_message:
-                        reply_text = ""
-                        for seg in reply_message:
-                            if isinstance(seg, Comp.Plain):
-                                reply_text += seg.text
+                    logger.debug(f"[数字群友] 检测到 Reply 组件: {component}")
+                    logger.debug(f"[数字群友] Reply 组件属性: {dir(component)}")
 
+                    reply_text = None
+
+                    if hasattr(component, 'message') and component.message:
+                        for seg in component.message:
+                            if isinstance(seg, Comp.Plain):
+                                reply_text = (reply_text or "") + seg.text
+                    elif hasattr(component, 'chain') and component.chain:
+                        for seg in component.chain:
+                            if isinstance(seg, Comp.Plain):
+                                reply_text = (reply_text or "") + seg.text
+                    elif hasattr(component, 'text') and component.text:
+                        reply_text = component.text
+                    elif hasattr(component, 'selected_text') and component.selected_text:
+                        reply_text = component.selected_text
+
+                    if reply_text:
                         reply_text = reply_text.strip()
+                        logger.debug(f"[数字群友] 被回复消息文本: {reply_text[:50]}...")
+
                         if reply_text.startswith("[") and "]" in reply_text:
                             end_idx = reply_text.index("]")
                             alias_in_reply = reply_text[1:end_idx]
@@ -935,7 +949,7 @@ class Main(Star):
                                 if p.get("alias") == alias_in_reply:
                                     return p.get("qq"), alias_in_reply
                 except Exception as e:
-                    logger.debug(f"[数字群友] 解析回复消息失败: {e}")
+                    logger.warning(f"[数字群友] 解析回复消息失败: {e}")
 
         return None
 
