@@ -892,9 +892,6 @@ class Main(Star):
             if alias in message_text:
                 should_respond = True
 
-        if not should_respond and session:
-            should_respond = True
-
         if not should_respond:
             return
 
