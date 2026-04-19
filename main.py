@@ -855,7 +855,7 @@ class Main(Star):
 
         session = self.session_manager.get_active(group_id)
         qq, alias = None, None
-        is_reply_to_persona = False
+        is_reply_to_persona = False  # 标记当前消息是否为回复人格消息
 
         if session:
             qq, alias = session
