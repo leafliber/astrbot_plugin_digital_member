@@ -127,6 +127,115 @@ class Main(Star):
         async for result in self._ask_persona(event, target_qq, question):
             yield result
 
+    # ===== 上下文管理指令组 =====
+
+    @filter.command_group("dm", alias={"数字分身"})
+    def dm(self):
+        """数字分身管理指令组"""
+        pass
+
+    @dm.command("上下文", alias={"context"})
+    async def dm_context(self, event: AstrMessageEvent):
+        """管理数字分身的对话上下文
+
+        用法:
+          /dm 上下文 - 查看当前上下文状态
+          /dm 上下文 清空 [代称] - 清空对话历史
+          /dm 上下文 压缩 [代称] - 手动压缩对话历史
+        """
+        group_id = event.message_obj.group_id
+        if not group_id:
+            yield event.plain_result("此功能仅在群聊中可用")
+            return
+
+        message_chain = event.message_obj.message
+        action = None
+        target_identifier = None
+
+        for component in message_chain:
+            if isinstance(component, Comp.At):
+                target_identifier = str(component.qq)
+            elif isinstance(component, Comp.Plain):
+                text = component.text.strip()
+                for prefix in ["/dm 上下文", "/dm context", "/数字分身 上下文", "/数字分身 context"]:
+                    text = text.replace(prefix, "").strip()
+                if not text:
+                    continue
+                parts = text.split(maxsplit=1)
+                if parts[0] in ["清空", "压缩", "clear", "compress"]:
+                    action = parts[0]
+                    if len(parts) > 1:
+                        target_identifier = target_identifier or parts[1]
+                elif not action:
+                    target_identifier = target_identifier or parts[0]
+
+        target_qq = None
+        if target_identifier:
+            qq = await self.storage.get_qq_by_alias(target_identifier, group_id)
+            if qq:
+                target_qq = qq
+            elif target_identifier.isdigit():
+                target_qq = target_identifier
+
+        if not target_qq:
+            session = self.session_manager.get_active(group_id)
+            if session:
+                target_qq = session[0]
+            else:
+                default = await self.storage.get_default_persona(group_id)
+                if default:
+                    target_qq = default.get("qq")
+
+        if not target_qq:
+            if action:
+                yield event.plain_result("请指定要管理上下文的数字分身（@群友、QQ号 或 代称）")
+            else:
+                personas = await self.storage.list_personas_by_group(group_id)
+                if not personas:
+                    yield event.plain_result("本群还没有数字分身\n使用 /mb 分析 @群友 代称 开始克隆")
+                else:
+                    lines = ["【本群数字分身上下文状态】\n"]
+                    for p in personas:
+                        alias = p.get('alias', '未知')
+                        summary = await self.conversation_manager.get_history_summary(p.get('qq', ''), group_id)
+                        lines.append(f"▸ {alias}: {summary}")
+                    yield event.plain_result("\n".join(lines))
+            return
+
+        persona = await self.storage.load_persona(target_qq, group_id)
+        if not persona:
+            alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
+            yield event.plain_result(f"未找到 {alias} 的画像")
+            return
+
+        alias = persona.get('alias', target_qq)
+
+        if not action:
+            history = await self.conversation_manager.get_history(target_qq, group_id)
+            summary = await self.conversation_manager.get_history_summary(target_qq, group_id)
+            last_compressed = persona.get('last_compressed', '从未')
+
+            info = (
+                f"【{alias} 的上下文状态】\n\n"
+                f"▸ 对话历史: {summary}\n"
+                f"▸ 上次压缩: {last_compressed}\n"
+                f"▸ 压缩阈值: {self.compress_threshold}轮\n\n"
+                f"可用操作:\n"
+                f"▸ /dm 上下文 清空 {alias} - 清空对话历史\n"
+                f"▸ /dm 上下文 压缩 {alias} - 手动压缩对话历史"
+            )
+            yield event.plain_result(info)
+            return
+
+        if action in ["清空", "clear"]:
+            await self.conversation_manager.clear_history(target_qq, group_id)
+            yield event.plain_result(f"✅ 已清空 {alias} 的对话历史")
+        elif action in ["压缩", "compress"]:
+            result = await self.conversation_manager.manual_compress(target_qq, group_id)
+            yield event.plain_result(f"✅ {alias}: {result}")
+        else:
+            yield event.plain_result(f"未知操作: {action}\n可用操作: 清空、压缩")
+
     async def _ask_persona(self, event: AstrMessageEvent, target_qq: str, question: str):
         """向指定人格提问（公共方法）
 
@@ -853,25 +962,30 @@ class Main(Star):
             logger.debug(f"[数字群友] 跳过指令消息: {message_text[:50]}...")
             return
 
-        session = self.session_manager.get_active(group_id)
         qq, alias = None, None
-        is_reply_to_persona = False  # 标记当前消息是否为回复人格消息
+        is_reply_to_persona = False
 
-        if session:
-            qq, alias = session
+        reply_persona = await self._check_reply_to_persona(event, group_id)
 
-            if message_text.startswith(f"[{alias}]"):
-                logger.debug(f"[数字群友] 拦截本插件消息，阻止默认处理: {message_text[:50]}...")
-                event.stop_event()
+        if reply_persona:
+            qq, alias = reply_persona
+            is_reply_to_persona = True
+            logger.debug(f"[数字群友] 检测到回复人格消息: {alias}")
+
+            if self._is_at_bot(event):
+                logger.debug(f"[数字群友] 回复人格消息但@了bot，交由bot原LLM处理")
                 return
-
-            self.session_manager.update_activity(group_id)
         else:
-            reply_persona = await self._check_reply_to_persona(event, group_id)
-            if reply_persona:
-                qq, alias = reply_persona
-                is_reply_to_persona = True
-                logger.debug(f"[数字群友] 检测到回复人格消息: {alias}")
+            session = self.session_manager.get_active(group_id)
+            if session:
+                qq, alias = session
+
+                if message_text.startswith(f"[{alias}]"):
+                    logger.debug(f"[数字群友] 拦截本插件消息，阻止默认处理: {message_text[:50]}...")
+                    event.stop_event()
+                    return
+
+                self.session_manager.update_activity(group_id)
             else:
                 return
 
@@ -938,6 +1052,26 @@ class Main(Star):
                     logger.warning(f"[数字群友] 解析回复消息失败: {e}")
 
         return None
+
+    def _is_at_bot(self, event: AstrMessageEvent) -> bool:
+        """检查消息是否@了bot本身
+
+        Args:
+            event: 消息事件
+
+        Returns:
+            是否@了bot
+        """
+        bot_id = event.message_obj.self_id
+        if not bot_id:
+            return False
+
+        message_chain = event.message_obj.message
+        for component in message_chain:
+            if isinstance(component, Comp.At):
+                if str(component.qq) == str(bot_id):
+                    return True
+        return False
 
     # ===== 辅助方法 =====
 

@@ -167,6 +167,53 @@ class PersonaConversationManager:
             await self.storage.save_persona(qq, group_id, persona)
             logger.info(f"[人格对话] 已清空 {qq} 在群 {group_id} 的对话历史")
 
+    async def manual_compress(self, qq: str, group_id: str) -> str:
+        """手动压缩对话历史
+
+        Args:
+            qq: 用户 QQ 号
+            group_id: 群号
+
+        Returns:
+            压缩结果描述
+        """
+        persona = await self.storage.load_persona(qq, group_id)
+        if not persona:
+            return "未找到画像"
+
+        history = persona.get('conversation_history', [])
+        if not history:
+            return "无对话历史，无需压缩"
+
+        if len(history) < 4:
+            return f"对话历史仅{len(history)}条，无需压缩"
+
+        old_count = len(history)
+
+        keep_count = min(self.SUMMARY_TURNS * 2, len(history) // 2)
+        if keep_count < 2:
+            keep_count = 2
+
+        old_messages = history[:-keep_count]
+        recent_messages = history[-keep_count:]
+
+        if not old_messages:
+            return f"对话历史仅{old_count}条，无需压缩"
+
+        summary = await self._generate_summary(old_messages)
+
+        persona['conversation_history'] = [
+            {'role': 'system', 'content': f'[历史摘要] {summary}', 'timestamp': datetime.now().isoformat()}
+        ] + recent_messages
+
+        persona['last_compressed'] = datetime.now().isoformat()
+        new_count = len(persona['conversation_history'])
+        logger.info(f"[人格对话] 手动压缩 {qq} 在群 {group_id} 的对话历史，从 {old_count} 条压缩到 {new_count} 条")
+
+        await self.storage.save_persona(qq, group_id, persona)
+
+        return f"已压缩：{old_count}条 → {new_count}条"
+
     async def get_history_summary(self, qq: str, group_id: str) -> str:
         """获取对话历史的简要描述
 
