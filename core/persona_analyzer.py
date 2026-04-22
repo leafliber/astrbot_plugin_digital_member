@@ -253,10 +253,10 @@ class PersonaAnalyzer:
         try:
             persona = json.loads(response_text)
         except json.JSONDecodeError:
-            json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
-            if json_match:
+            json_str = self._extract_json(response_text)
+            if json_str:
                 try:
-                    persona = json.loads(json_match.group())
+                    persona = json.loads(json_str)
                 except json.JSONDecodeError:
                     persona = self._get_default_persona()
             else:
@@ -308,3 +308,45 @@ class PersonaAnalyzer:
             'message_count': 0,
             'created_at': None,
         }
+
+    def _extract_json(self, text: str) -> str | None:
+        """从文本中提取 JSON 对象
+
+        Args:
+            text: 可能包含 JSON 的文本
+
+        Returns:
+            提取的 JSON 字符串，如果未找到则返回 None
+        """
+        start = text.find('{')
+        if start == -1:
+            return None
+
+        depth = 0
+        in_string = False
+        escape = False
+
+        for i, char in enumerate(text[start:], start):
+            if escape:
+                escape = False
+                continue
+
+            if char == '\\':
+                escape = True
+                continue
+
+            if char == '"' and not escape:
+                in_string = not in_string
+                continue
+
+            if in_string:
+                continue
+
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+
+        return None
