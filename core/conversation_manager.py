@@ -17,13 +17,15 @@ class PersonaConversationManager:
         context=None,
         max_turns: int = 20,
         compress_threshold: int = 15,
-        summary_turns: int = 5
+        summary_turns: int = 5,
+        summary_provider_id: str = ""
     ):
         self.storage = storage
         self.context = context
         self.MAX_HISTORY_TURNS = max_turns
         self.COMPRESS_THRESHOLD = compress_threshold
         self.SUMMARY_TURNS = summary_turns
+        self.summary_provider_id = summary_provider_id
         self._current_provider_id = None
 
     async def get_history(self, qq: str, group_id: str) -> list:
@@ -130,8 +132,9 @@ class PersonaConversationManager:
 
         try:
             if self.context:
+                provider_id = self.summary_provider_id or self._current_provider_id
                 llm_resp = await self.context.llm_generate(
-                    chat_provider_id=self._current_provider_id,
+                    chat_provider_id=provider_id,
                     prompt=summary_prompt,
                 )
                 return llm_resp.completion_text.strip()

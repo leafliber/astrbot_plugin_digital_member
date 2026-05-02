@@ -11,6 +11,18 @@
     "default": "",
     "_special": "select_provider"
   },
+  "conversation_provider_id": {
+    "description": "对话聊天使用的LLM提供商ID（留空使用默认提供商）",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider"
+  },
+  "summary_provider_id": {
+    "description": "对话压缩摘要使用的LLM提供商ID（留空使用默认提供商）",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider"
+  },
 
   "query": {
     "description": "消息查询设置",

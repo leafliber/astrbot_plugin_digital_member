@@ -29,6 +29,8 @@ class Main(Star):
         # 从配置读取参数
         self.default_time_range = config.get("default_time_range", "30天")
         self.analyze_provider_id = config.get("analyze_provider_id", "")
+        self.conversation_provider_id = config.get("conversation_provider_id", "")
+        self.summary_provider_id = config.get("summary_provider_id", "")
 
         # 查询配置
         query_cfg = config.get("query", {})
@@ -65,6 +67,7 @@ class Main(Star):
             context=context,
             max_turns=self.max_history_turns,
             compress_threshold=self.compress_threshold,
+            summary_provider_id=self.summary_provider_id,
         )
 
         logger.info("[数字群友] 插件已加载")
@@ -272,7 +275,9 @@ class Main(Star):
 
         try:
             umo = event.unified_msg_origin
-            prov_id = await self.context.get_current_chat_provider_id(umo=umo)
+            prov_id = self.conversation_provider_id
+            if not prov_id:
+                prov_id = await self.context.get_current_chat_provider_id(umo=umo)
             logger.debug(f"[数字群友] 使用LLM提供商: {prov_id}")
 
             await self.conversation_manager.add_message(target_qq, group_id, 'user', question, provider_id=prov_id)
