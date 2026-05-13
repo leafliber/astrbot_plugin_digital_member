@@ -1,5 +1,6 @@
 """
 Prompt 生成器 - 生成带人格上下文的 Prompt
+核心原则：示例驱动 > 特征描述，避免 LLM 过度表演人格特征
 """
 import re
 from astrbot import logger
@@ -12,14 +13,6 @@ class PromptGenerator:
 
     @staticmethod
     def split_messages(response: str) -> list[str]:
-        """将 LLM 响应分割为多条消息
-
-        Args:
-            response: LLM 返回的响应文本
-
-        Returns:
-            分割后的消息列表（最多6条）
-        """
         if not response:
             return []
 
@@ -33,71 +26,49 @@ class PromptGenerator:
         return messages if messages else [response.strip()]
 
     def generate(self, persona: dict, question: str, history: list = None, alias: str = None) -> str:
-        """生成带人格上下文和历史记录的 prompt
-
-        Args:
-            persona: 人格画像字典
-            question: 用户问题
-            history: 对话历史列表（可选）
-            alias: 代称（可选）
-
-        Returns:
-            生成的 prompt 字符串
-        """
         name = alias or persona.get('alias', '群友')
 
         personality = persona.get('personality', '')
         speaking_style = persona.get('speaking_style', '')
         tone = persona.get('tone', '')
         catchphrases = persona.get('catchphrases', [])
-        sentence_pattern = persona.get('sentence_pattern', '')
         interests = persona.get('interests', [])
-        emoji_usage = persona.get('emoji_usage', '')
-        punctuation = persona.get('punctuation', '')
         values = persona.get('values', '')
-        emotional_pattern = persona.get('emotional_pattern', '')
         typical_responses = persona.get('typical_responses', [])
-
-        character_sketch_parts = []
-        if personality:
-            character_sketch_parts.append(f"性格{personality}")
-        if speaking_style:
-            character_sketch_parts.append(speaking_style)
-        if tone:
-            character_sketch_parts.append(f"语气{tone}")
-        if emotional_pattern:
-            character_sketch_parts.append(f"情绪表达{emotional_pattern}")
-        if sentence_pattern:
-            character_sketch_parts.append(sentence_pattern)
-        if emoji_usage:
-            character_sketch_parts.append(emoji_usage)
-        if punctuation:
-            character_sketch_parts.append(punctuation)
-
-        character_sketch = '，'.join(character_sketch_parts) if character_sketch_parts else '普通群友'
-
-        interest_str = '、'.join(interests) if interests else ''
-
-        values_note = ""
-        if values:
-            values_note = f"\n你在意的事情：{values}"
-
-        interest_note = ""
-        if interest_str:
-            interest_note = f"\n你平时关注：{interest_str}"
 
         examples_section = ""
         if typical_responses:
-            examples = "\n".join([f"- {resp}" for resp in typical_responses[:5]])
+            examples = "\n".join([f"· {resp}" for resp in typical_responses[:8]])
             examples_section = f"""
-
-以下是{name}过去在群里说过的话，你的回复必须和这些话的风格一模一样：
+【{name}说过的话】（模仿这些话的语气和节奏，不是照抄内容）
 {examples}"""
 
-        catchphrase_note = ""
+        brief_sketch = self._build_brief_sketch(personality, speaking_style, tone)
+
+        catchphrase_hint = ""
         if catchphrases:
             shown = '、'.join([f'「{c}」' for c in catchphrases[:3]])
-            catchphrase_note = f"\n你有时会说{shown}之类的话，但只在合适的时候自然地说，不要每句都加"
+            catchphrase_hint = f"偶尔自然带出{shown}等口头禅，但绝大多数时候不说。"
+
+        interest_hint = ""
+        if interests:
+            interest_hint = f"对{'、'.join(interests[:5])}比较熟悉。"
+
+        values_hint = ""
+        if values:
+            values_hint = f"在意{values}。"
+
+        background_hints = []
+        if catchphrase_hint:
+            background_hints.append(catchphrase_hint)
+        if interest_hint:
+            background_hints.append(interest_hint)
+        if values_hint:
+            background_hints.append(values_hint)
+
+        background_section = ""
+        if background_hints:
+            background_section = "\n" + "".join(background_hints)
 
         history_section = ""
         if history:
@@ -115,15 +86,37 @@ class PromptGenerator:
 刚才的聊天：
 {chr(10).join(history_lines)}"""
 
-        prompt = f"""你{name}，正在群里聊天。{character_sketch}。{values_note}{interest_note}{catchphrase_note}{examples_section}
+        prompt = f"""你正在以「{name}」的身份在群里聊天。{brief_sketch}{background_section}
+{examples_section}
 {history_section}
 群里有人说：{question}
 
-{name}的回复（用[MSG]分隔多条消息，每条1-3句，总条数不超过3条）："""
+重要：像真人聊天一样自然回复，不要刻意展示性格特征，不要堆砌口头禅和表情，绝大多数时候就是普通说话。用[MSG]分隔多条消息，每条1-3句，总条数不超过3条。
 
-        logger.debug(f"[Prompt生成] 代称={name}, 性格={personality}, 风格={character_sketch}")
-        logger.debug(f"[Prompt生成] 口头禅={catchphrases}, 典型回复数={len(typical_responses)}")
+{name}："""
+
+        logger.debug(f"[Prompt生成] 代称={name}, 性格={personality}, 示例数={len(typical_responses)}")
         if history:
             logger.debug(f"[Prompt生成] 历史轮数={len(history)}, 使用最近{min(len(history), 10)}条")
 
         return prompt
+
+    def _build_brief_sketch(self, personality: str, speaking_style: str, tone: str) -> str:
+        """构建简短的角色素描，避免特征堆砌
+
+        只保留最核心的 1-2 个特征描述，让 LLM 有基本方向感，
+        但不至于逐条表演。具体风格由典型回复示例传达。
+        """
+        core_parts = []
+        if personality:
+            core_parts.append(personality)
+        if speaking_style:
+            core_parts.append(speaking_style)
+        if tone and tone not in (personality or '') and tone not in (speaking_style or ''):
+            core_parts.append(f"语气{tone}")
+
+        if not core_parts:
+            return "普通群友"
+
+        sketch = '，'.join(core_parts[:2])
+        return sketch

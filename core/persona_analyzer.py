@@ -304,63 +304,57 @@ class PersonaAnalyzer:
             ])
             extra_note = ""
 
-        return f"""你是一位专业的语言风格分析师。请仔细分析以下聊天消息样本，深入提取说话者的性格特征和语言习惯。
+        return f"""分析以下聊天消息，提取说话者的人格画像。
 
 消息样本（共{len(batch)}条）：
 {sample_texts}
 
 {extra_note}
 
-请输出 JSON 格式的画像，包含以下字段：
+输出 JSON，字段如下：
 
-【基础特征】
-- personality: 性格特征概括（2-4个字，如「开朗活泼」「内向稳重」「幽默风趣」「直率坦诚」「温柔细腻」等）
-- speaking_style: 说话风格详细描述（具体描述说话方式，如「说话幽默爱开玩笑，语气轻松随意」等）
-- tone: 说话语气（如「亲切温和」「冷淡疏离」「热情洋溢」「调侃戏谑」等）
+- personality: 核心性格（2-4字，如「开朗活泼」「内向稳重」「幽默风趣」）
+- speaking_style: 说话风格一句话概括（如「说话随意，爱开玩笑」，不要超过15字）
+- tone: 语气（如「亲切温和」「冷淡疏离」，2-4字）
+- catchphrases: 口头禅列表（真正反复出现的词或句式，没有则空数组，最多5个）
+- sentence_pattern: 常用句式（一句话，如「句子偏短，爱用反问」）
+- emoji_usage: 表情习惯（一句话，如「偶尔用可爱表情」）
+- punctuation: 标点习惯（一句话，如「爱用波浪号~」）
+- interests: 兴趣关键词（3-5个，从消息推断）
+- values: 价值观倾向（可选，如「重视友情」）
+- emotional_pattern: 情绪特点（2-4字，如「外露」「内敛」）
+- typical_responses: 最重要！选5-8条最能代表其说话风格的原消息原文，保持原样不修改
 
-【语言习惯】
-- catchphrases: 口头禅列表（3-5个真正反复出现的词语、表情或句式，没有则留空数组）
-- sentence_pattern: 常用句式（如「喜欢用反问句」「经常用感叹号」「句子偏短」等）
-- emoji_usage: 表情符号使用习惯（如「经常使用可爱表情」「喜欢用emoji表达情绪」等）
-- punctuation: 标点符号习惯（如「喜欢用波浪号~」「句末常加省略号」「感叹号多」等）
+关键要求：
+1. typical_responses 是最重要的字段，务必选最有风格代表性的原消息，数量5-8条
+2. speaking_style/tone/emotional_pattern 要简短，不要写长描述
+3. catchphrases 必须是真实出现过的，不要编造
+4. 不明显的特征留空或写"无明显特征"
 
-【兴趣态度】
-- interests: 兴趣爱好关键词（3-5个，从消息内容推断）
-- values: 价值观倾向（如「重视友情」「追求自由」「注重效率」等，可选）
-- emotional_pattern: 情绪表达特点（如「情绪外露」「内敛含蓄」「容易激动」等）
-
-【典型对话】
-- typical_responses: 典型回复示例（3-5条最能代表其说话风格的真实消息原文，保持原样）
-
-分析要点：
-1. personality 要简洁准确，抓住最核心的性格特点
-2. catchphrases 必须是真实出现过的，不要猜测或编造
-3. typical_responses 要选择最能体现其风格的原消息
-4. 各字段描述要具体，避免空泛的形容词
-5. 如果某些特征不明显，对应字段可以留空或写"无明显特征"
-
-请只输出 JSON，不要有其他内容。"""
+只输出 JSON。"""
 
     async def _summarize_results(self, results: list, provider_id: str) -> dict:
-        prompt = f"""你是一位专业的语言风格分析师。以下是分批次分析得出的多个人格画像片段，请综合得出统一的最终画像。
+        prompt = f"""综合以下多批次的人格画像片段，得出统一的最终画像。
 
 批次分析结果：
 {json.dumps(results, ensure_ascii=False, indent=2)}
 
-汇总要求：
-1. personality：综合所有批次，取最典型、最准确的核心性格描述（2-4字）
-2. speaking_style：合并描述，保留共同特征，去除重复，形成完整风格画像
-3. tone：取最主流的语气特征
-4. catchphrases：取所有批次中出现频率最高或有代表性的口头禅（去重）
-5. sentence_pattern：综合各批次的句式特点
-6. emoji_usage：综合描述表情使用习惯
-7. punctuation：综合标点使用特点
-8. interests：合并去重，保留最相关的关键词
-9. values：如有明显价值观倾向则保留
-10. emotional_pattern：综合情绪表达特点
-11. typical_responses：从各批次的典型回复中选出最具代表性的3-5条
+汇总规则：
+1. personality：取最核心的性格描述（2-4字）
+2. speaking_style：一句话概括（不超过15字），合并共同特征
+3. tone：最主流的语气（2-4字）
+4. catchphrases：高频口头禅去重合并
+5. sentence_pattern：一句话概括
+6. emoji_usage：一句话概括
+7. punctuation：一句话概括
+8. interests：合并去重
+9. values：如有则保留
+10. emotional_pattern：2-4字
+11. typical_responses：最重要！从各批次的典型回复中选出最具代表性的5-8条，必须保留原文不修改
 
-请只输出 JSON 格式的最终画像，字段与输入相同。"""
+关键：typical_responses 是最重要的字段，优先保留风格最鲜明、最有代表性的原消息。抽象描述要简短。
+
+只输出 JSON。"""
 
         try:
             logger.debug(f"[人格分析] 汇总 Prompt 长度: {len(prompt)}")
