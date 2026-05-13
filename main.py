@@ -130,14 +130,7 @@ class Main(Star):
         async for result in self._ask_persona(event, target_qq, question):
             yield result
 
-    # ===== 上下文管理指令组 =====
-
-    @filter.command_group("dm", alias={"数字分身"})
-    def dm(self):
-        """数字分身管理指令组"""
-        pass
-
-    @dm.command("上下文", alias={"context"})
+    @mb.command("上下文", alias={"context"})
     async def dm_context(self, event: AstrMessageEvent):
         """管理数字分身的对话上下文
 
