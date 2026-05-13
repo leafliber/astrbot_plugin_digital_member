@@ -1,8 +1,8 @@
 """
 画像分析器 - 调用 AI 分析消息生成人格画像
+支持 Token 感知分批 + 早停收敛检测
 """
 import json
-import re
 import asyncio
 from astrbot import logger
 from astrbot.api.star import Context
@@ -10,6 +10,12 @@ from astrbot.api.star import Context
 
 class PersonaAnalyzer:
     """画像分析器 - 调用 LLM 分析消息生成人格画像"""
+
+    TOKEN_BUDGET_PER_BATCH = 3000
+    PROMPT_OVERHEAD_TOKENS = 800
+    CHARS_PER_TOKEN = 2
+    CONVERGENCE_THRESHOLD = 0.7
+    MIN_BATCHES_BEFORE_CONVERGENCE = 2
 
     def __init__(self, context: Context):
         self.context = context
@@ -20,19 +26,20 @@ class PersonaAnalyzer:
         provider_id: str = None,
         batch_size: int = 100,
         mode: str = "batch_summarize",
-        batch_delay_ms: int = 1000
+        batch_delay_ms: int = 1000,
+        token_budget: int = 0,
+        enable_early_stop: bool = True,
     ) -> dict:
-        """分析消息生成画像（支持分批次）
+        """分析消息生成画像
 
         Args:
-            messages: 消息列表，每条包含 time、content 或 formatted
-            provider_id: LLM 提供商 ID，为 None 时使用默认提供商
-            batch_size: 每批次分析的消息数
+            messages: 消息列表（已采样后的高质量样本）
+            provider_id: LLM 提供商 ID
+            batch_size: 每批次消息数（仅 mode=single 时使用）
             mode: 分析模式 ("single" 或 "batch_summarize")
             batch_delay_ms: 批次间延迟（毫秒）
-
-        Returns:
-            人格画像字典
+            token_budget: 每批次 token 预算（0=使用默认值 3000）
+            enable_early_stop: 是否启用早停收敛检测
         """
         if not messages:
             logger.warning("[人格分析] 无有效消息")
@@ -41,71 +48,216 @@ class PersonaAnalyzer:
         logger.info(f"[人格分析] 开始分析 {len(messages)} 条消息，模式: {mode}")
 
         if mode == "single":
-            # 取样本一次性分析（原有逻辑）
             sample = messages[-min(batch_size, len(messages)):]
             logger.info(f"[人格分析] 取样本 {len(sample)} 条进行一次性分析")
             return await self._analyze_batch(sample, provider_id)
-        else:
-            # 分批次分析后汇总
-            return await self._analyze_batch_summarize(
-                messages, batch_size, provider_id, batch_delay_ms
-            )
 
-    async def _analyze_batch_summarize(
-        self,
-        messages: list,
-        batch_size: int,
-        provider_id: str,
-        batch_delay_ms: int
-    ) -> dict:
-        """分批次分析后汇总
+        budget = token_budget if token_budget > 0 else self.TOKEN_BUDGET_PER_BATCH
+        batches = self._create_token_aware_batches(messages, budget)
+        logger.info(f"[人格分析] Token感知分批: {len(messages)} 条消息 → {len(batches)} 个批次")
+        for i, batch in enumerate(batches):
+            est_tokens = self._estimate_batch_tokens(batch)
+            logger.info(f"[人格分析] 批次 {i+1}: {len(batch)} 条消息, 估算 ~{est_tokens} tokens")
+
+        return await self._analyze_with_early_stop(
+            batches, provider_id, batch_delay_ms, enable_early_stop
+        )
+
+    def _create_token_aware_batches(self, messages: list, token_budget: int) -> list:
+        """按 token 预算动态分批，而非固定条数
+
+        每个批次填满 token 预算为止，避免固定条数导致的
+        短消息批次浪费空间、长消息批次溢出上下文窗口的问题。
 
         Args:
             messages: 消息列表
-            batch_size: 每批次消息数
+            token_budget: 每批次 token 预算
+
+        Returns:
+            分批后的消息列表的列表
+        """
+        content_budget = token_budget - self.PROMPT_OVERHEAD_TOKENS
+        if content_budget <= 0:
+            content_budget = token_budget
+
+        batches = []
+        current_batch = []
+        current_tokens = 0
+
+        for msg in messages:
+            msg_tokens = self._estimate_msg_tokens(msg)
+
+            if current_batch and (current_tokens + msg_tokens > content_budget):
+                batches.append(current_batch)
+                current_batch = []
+                current_tokens = 0
+
+            current_batch.append(msg)
+            current_tokens += msg_tokens
+
+        if current_batch:
+            batches.append(current_batch)
+
+        return batches
+
+    def _estimate_msg_tokens(self, msg) -> int:
+        """估算单条消息的 token 数"""
+        if isinstance(msg, dict):
+            content = msg.get('formatted', msg.get('content', ''))
+        else:
+            content = str(msg)
+        return max(1, len(content) // self.CHARS_PER_TOKEN)
+
+    def _estimate_batch_tokens(self, batch: list) -> int:
+        """估算一个批次的 token 总数"""
+        return sum(self._estimate_msg_tokens(msg) for msg in batch)
+
+    async def _analyze_with_early_stop(
+        self,
+        batches: list,
+        provider_id: str,
+        batch_delay_ms: int,
+        enable_early_stop: bool,
+    ) -> dict:
+        """带早停收敛检测的分批分析
+
+        每完成一个批次后，与之前的结果比较相似度。
+        如果连续多个批次结果高度相似（收敛），则提前终止，
+        避免在已确定的人格特征上浪费 API 请求。
+
+        Args:
+            batches: 分批后的消息列表
             provider_id: LLM 提供商 ID
-            batch_delay_ms: 批次间延迟（毫秒）
+            batch_delay_ms: 批次间延迟
+            enable_early_stop: 是否启用早停
 
         Returns:
             最终的人格画像
         """
-        batches = [
-            messages[i:i + batch_size]
-            for i in range(0, len(messages), batch_size)
-        ]
-        logger.info(f"[人格分析] 分 {len(batches)} 批次分析")
-
         batch_results = []
+        converged = False
+
         for i, batch in enumerate(batches):
-            logger.debug(f"[人格分析] 分析第 {i + 1} 批次，{len(batch)} 条消息")
+            logger.info(f"[人格分析] 分析第 {i + 1}/{len(batches)} 批次，{len(batch)} 条消息")
             result = await self._analyze_batch(batch, provider_id)
             batch_results.append(result)
 
-            # 批次间延迟（避免 API 限速）
+            if enable_early_stop and len(batch_results) >= self.MIN_BATCHES_BEFORE_CONVERGENCE:
+                similarity = self._compute_convergence(batch_results)
+                logger.info(f"[人格分析] 收敛检测: 前 {len(batch_results)} 批次相似度 = {similarity:.2f}")
+
+                if similarity >= self.CONVERGENCE_THRESHOLD:
+                    logger.info(f"[人格分析] ✅ 收敛检测通过 (相似度 {similarity:.2f} ≥ {self.CONVERGENCE_THRESHOLD})，提前终止")
+                    logger.info(f"[人格分析] 节省了 {len(batches) - len(batch_results)} 个批次的 API 请求")
+                    converged = True
+                    break
+
             if i < len(batches) - 1 and batch_delay_ms > 0:
                 await asyncio.sleep(batch_delay_ms / 1000)
 
-        # 汇总所有批次结果
-        logger.info(f"[人格分析] 开始汇总 {len(batch_results)} 个批次结果")
-        final_persona = await self._summarize_results(batch_results, provider_id)
+        if not converged and len(batches) > len(batch_results):
+            logger.info(f"[人格分析] 未触发早停，已分析全部 {len(batch_results)}/{len(batches)} 批次")
 
-        # 记录总消息数和批次数
+        if len(batch_results) == 1:
+            final_persona = batch_results[0]
+        else:
+            logger.info(f"[人格分析] 开始汇总 {len(batch_results)} 个批次结果")
+            final_persona = await self._summarize_results(batch_results, provider_id)
+
         total_msg_count = sum(r.get('message_count', 0) for r in batch_results)
         final_persona['message_count'] = total_msg_count
         final_persona['batch_count'] = len(batch_results)
+        final_persona['total_batches_planned'] = len(batches)
+        final_persona['early_stopped'] = converged
 
         return final_persona
 
-    async def _analyze_batch(self, batch: list, provider_id: str) -> dict:
-        """分析单个批次
+    def _compute_convergence(self, results: list) -> float:
+        """计算批次结果的收敛程度
+
+        比较最新批次与之前所有批次的平均相似度。
+        相似度基于核心人格字段的重叠程度计算。
 
         Args:
-            batch: 消息批次
-            provider_id: LLM 提供商 ID
+            results: 批次结果列表
 
         Returns:
-            该批次的人格画像分析结果
+            收敛分数 (0.0 ~ 1.0)，越高表示越收敛
         """
+        if len(results) < 2:
+            return 0.0
+
+        latest = results[-1]
+        previous = results[:-1]
+
+        scores = []
+        for prev in previous:
+            score = self._persona_similarity(latest, prev)
+            scores.append(score)
+
+        return sum(scores) / len(scores)
+
+    def _persona_similarity(self, a: dict, b: dict) -> float:
+        """计算两个人格画像的相似度
+
+        比较维度：
+        1. personality 完全匹配 (+0.3)
+        2. catchphrases 重叠率 (+0.25)
+        3. tone 相似度 (+0.15)
+        4. interests 重叠率 (+0.15)
+        5. speaking_style 关键词重叠 (+0.15)
+
+        Args:
+            a: 人格画像 A
+            b: 人格画像 B
+
+        Returns:
+            相似度 (0.0 ~ 1.0)
+        """
+        score = 0.0
+
+        p_a = a.get('personality', '')
+        p_b = b.get('personality', '')
+        if p_a and p_b and p_a == p_b:
+            score += 0.3
+        elif p_a and p_b:
+            common = set(p_a) & set(p_b)
+            if common:
+                score += 0.15 * len(common) / max(len(set(p_a)), len(set(p_b)), 1)
+
+        cp_a = set(a.get('catchphrases', []))
+        cp_b = set(b.get('catchphrases', []))
+        if cp_a or cp_b:
+            overlap = len(cp_a & cp_b) / max(len(cp_a | cp_b), 1)
+            score += 0.25 * overlap
+
+        t_a = a.get('tone', '')
+        t_b = b.get('tone', '')
+        if t_a and t_b and t_a == t_b:
+            score += 0.15
+        elif t_a and t_b:
+            common = set(t_a) & set(t_b)
+            if common:
+                score += 0.075 * len(common) / max(len(set(t_a)), len(set(t_b)), 1)
+
+        i_a = set(a.get('interests', []))
+        i_b = set(b.get('interests', []))
+        if i_a or i_b:
+            overlap = len(i_a & i_b) / max(len(i_a | i_b), 1)
+            score += 0.15 * overlap
+
+        ss_a = a.get('speaking_style', '')
+        ss_b = b.get('speaking_style', '')
+        if ss_a and ss_b:
+            words_a = set(ss_a)
+            words_b = set(ss_b)
+            if words_a or words_b:
+                overlap = len(words_a & words_b) / max(len(words_a | words_b), 1)
+                score += 0.15 * overlap
+
+        return min(score, 1.0)
+
+    async def _analyze_batch(self, batch: list, provider_id: str) -> dict:
         prompt = self._build_batch_prompt(batch)
 
         try:
@@ -127,14 +279,6 @@ class PersonaAnalyzer:
             return self._get_default_persona()
 
     def _build_batch_prompt(self, batch: list) -> str:
-        """构建批次分析 prompt
-
-        Args:
-            batch: 消息批次
-
-        Returns:
-            分析用的 prompt 字符串
-        """
         has_formatted = any('formatted' in msg for msg in batch)
 
         if has_formatted:
@@ -189,15 +333,6 @@ class PersonaAnalyzer:
 请只输出 JSON，不要有其他内容。"""
 
     async def _summarize_results(self, results: list, provider_id: str) -> dict:
-        """汇总多个批次的分析结果
-
-        Args:
-            results: 各批次的分析结果列表
-            provider_id: LLM 提供商 ID
-
-        Returns:
-            最终汇总的人格画像
-        """
         prompt = f"""你是一位专业的语言风格分析师。以下是分批次分析得出的多个人格画像片段，请综合得出统一的最终画像。
 
 批次分析结果：
@@ -234,22 +369,12 @@ class PersonaAnalyzer:
 
         except Exception as e:
             logger.error(f"[人格分析] 汇总 LLM调用失败: {e}")
-            # 如果汇总失败，返回第一个批次的结果作为 fallback
             if results:
                 logger.warning("[人格分析] 使用第一个批次结果作为 fallback")
                 return results[0]
             return self._get_default_persona()
 
     def _parse_response(self, response_text: str, message_count: int) -> dict:
-        """解析 LLM 响应
-
-        Args:
-            response_text: LLM 返回的文本
-            message_count: 分析的消息数量
-
-        Returns:
-            人格画像字典
-        """
         try:
             persona = json.loads(response_text)
         except json.JSONDecodeError:
@@ -288,11 +413,6 @@ class PersonaAnalyzer:
         return persona
 
     def _get_default_persona(self) -> dict:
-        """获取默认画像
-
-        Returns:
-            默认的人格画像字典
-        """
         return {
             'personality': '普通',
             'speaking_style': '正常',
@@ -310,14 +430,6 @@ class PersonaAnalyzer:
         }
 
     def _extract_json(self, text: str) -> str | None:
-        """从文本中提取 JSON 对象
-
-        Args:
-            text: 可能包含 JSON 的文本
-
-        Returns:
-            提取的 JSON 字符串，如果未找到则返回 None
-        """
         start = text.find('{')
         if start == -1:
             return None

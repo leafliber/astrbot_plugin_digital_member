@@ -26,30 +26,26 @@ class Main(Star):
         super().__init__(context)
         self.config = config
 
-        # 从配置读取参数
+        # 用户可配置项
         self.default_time_range = config.get("default_time_range", "30天")
         self.analyze_provider_id = config.get("analyze_provider_id", "")
         self.conversation_provider_id = config.get("conversation_provider_id", "")
         self.summary_provider_id = config.get("summary_provider_id", "")
+        self.query_max_count = config.get("query_max_count", 0)
+        self.fetch_context = config.get("fetch_context", False)
+        self.session_timeout = config.get("session_timeout_minutes", 5)
 
-        # 查询配置
-        query_cfg = config.get("query", {})
-        self.query_max_count = query_cfg.get("max_count", 0)
-        self.fetch_context = query_cfg.get("fetch_context", False)
-        self.context_before = query_cfg.get("context_before", 3)
-        self.context_after = query_cfg.get("context_after", 3)
-
-        # 分析配置
-        analysis_cfg = config.get("analysis", {})
-        self.batch_size = analysis_cfg.get("batch_size", 100)
-        self.analysis_mode = analysis_cfg.get("mode", "batch_summarize")
-        self.batch_delay_ms = analysis_cfg.get("batch_delay_ms", 1000)
-
-        # 对话配置
-        conv_cfg = config.get("conversation", {})
-        self.max_history_turns = conv_cfg.get("max_history_turns", 20)
-        self.compress_threshold = conv_cfg.get("compress_threshold", 15)
-        self.session_timeout = conv_cfg.get("session_timeout_minutes", 5)
+        # 内部参数（已优化为合理默认值，不暴露给用户）
+        self.context_before = 3
+        self.context_after = 3
+        self.sample_max = 600
+        self.batch_size = 100
+        self.analysis_mode = "batch_summarize"
+        self.batch_delay_ms = 1000
+        self.token_budget = 3000
+        self.enable_early_stop = True
+        self.max_history_turns = 20
+        self.compress_threshold = 15
 
         # 初始化组件
         self.storage = PersonaStorage(self)
@@ -58,6 +54,7 @@ class Main(Star):
             fetch_context=self.fetch_context,
             context_before=self.context_before,
             context_after=self.context_after,
+            sample_max=self.sample_max,
         )
         self.persona_analyzer = PersonaAnalyzer(context)
         self.session_manager = SessionManager(self.session_timeout)
@@ -103,16 +100,16 @@ class Main(Star):
 
     # ===== 指令组注册 =====
 
-    @filter.command_group("mb", alias={"群友"})
-    def mb(self):
-        """群友人格克隆指令组"""
+    @filter.command_group("dm", alias={"群友"})
+    def dm(self):
+        """数字分身指令组"""
         pass
 
-    @filter.command("mbb")
-    async def mbb(self, event: AstrMessageEvent):
-        """直接和默认群友对话
+    @filter.command("dmt")
+    async def dmt(self, event: AstrMessageEvent):
+        """直接和默认数字分身对话
 
-        用法: /mbb 问题内容
+        用法: /dmt 问题内容
         """
         group_id = event.message_obj.group_id
         if not group_id:
@@ -121,23 +118,23 @@ class Main(Star):
 
         default = await self.storage.get_default_persona(group_id)
         if not default:
-            yield event.plain_result("本群尚未设置默认数字群友\n使用 /mb 默认 @群友 设置")
+            yield event.plain_result("本群尚未设置默认数字群友\n使用 /dm 默认 @群友 设置")
             return
 
         target_qq = default.get("qq")
-        question = event.message_str.replace("/mbb", "").strip()
+        question = event.message_str.replace("/dmt", "").strip()
 
         async for result in self._ask_persona(event, target_qq, question):
             yield result
 
-    @mb.command("上下文", alias={"context"})
+    @dm.command("上下文", alias={"context"})
     async def dm_context(self, event: AstrMessageEvent):
         """管理数字分身的对话上下文
 
         用法:
-          /dm 上下文 - 查看当前上下文状态
-          /dm 上下文 清空 [代称] - 清空对话历史
-          /dm 上下文 压缩 [代称] - 手动压缩对话历史
+         /dm 上下文 - 查看当前上下文状态
+         /dm 上下文 清空 [代称] - 清空对话历史
+         /dm 上下文 压缩 [代称] - 手动压缩对话历史
         """
         group_id = event.message_obj.group_id
         if not group_id:
@@ -188,7 +185,7 @@ class Main(Star):
             else:
                 personas = await self.storage.list_personas_by_group(group_id)
                 if not personas:
-                    yield event.plain_result("本群还没有数字分身\n使用 /mb 分析 @群友 代称 开始克隆")
+                    yield event.plain_result("本群还没有数字分身\n使用 /dm 分析 @群友 代称 开始克隆")
                 else:
                     lines = ["【本群数字分身上下文状态】\n"]
                     for p in personas:
@@ -248,7 +245,7 @@ class Main(Star):
         persona = await self.storage.load_persona(target_qq, group_id)
         if not persona:
             alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
-            yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /mb 分析")
+            yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /dm 分析")
             return
 
         alias = persona.get('alias', target_qq)
@@ -296,11 +293,11 @@ class Main(Star):
 
     # ===== 分析指令（一键克隆） =====
 
-    @mb.command("分析", alias={"analyze"})
+    @dm.command("分析", alias={"analyze"})
     async def analyze(self, event: AstrMessageEvent):
         """一键克隆群友人格
 
-        用法: /mb 分析 @群友 代称 [时间范围]
+        用法: /dm 分析 @群友 代称 [时间范围]
         """
         from datetime import datetime
 
@@ -341,7 +338,7 @@ class Main(Star):
                 if isinstance(component, Comp.Plain):
                     text = component.text.strip()
                     # 跳过指令本身
-                    text = text.replace("/mb 分析", "").replace("/群友 分析", "").strip()
+                    text = text.replace("/dm 分析", "").replace("/群友 分析", "").strip()
                     parts = text.split(maxsplit=2)
                     if parts and parts[0].isdigit():
                         target_qq = parts[0]
@@ -373,7 +370,7 @@ class Main(Star):
                 f"━━━━━━━━━━━━━━━\n"
                 f"克隆他人人格需要对方确认\n"
                 f"请让 {alias} 发送以下指令确认：\n"
-                f"/mb 确认\n"
+                f" /dm 确认\n"
                 f"━━━━━━━━━━━━━━━\n"
                 f"提示：克隆自己无需确认"
             )
@@ -385,7 +382,7 @@ class Main(Star):
 
     # ===== 确认指令 =====
 
-    @mb.command("确认", alias={"confirm"})
+    @dm.command("确认", alias={"confirm"})
     async def confirm(self, event: AstrMessageEvent):
         """确认被克隆请求"""
         from datetime import datetime, timedelta
@@ -469,13 +466,15 @@ class Main(Star):
         else:
             logger.debug(f"[人格克隆] 使用配置的提供商: {provider_id}")
 
-        # 分析生成画像（支持分批次）
+        # 分析生成画像（Token感知分批 + 早停收敛）
         persona = await self.persona_analyzer.analyze(
             messages,
             provider_id=provider_id,
             batch_size=self.batch_size,
             mode=self.analysis_mode,
-            batch_delay_ms=self.batch_delay_ms
+            batch_delay_ms=self.batch_delay_ms,
+            token_budget=self.token_budget,
+            enable_early_stop=self.enable_early_stop,
         )
         persona['alias'] = alias
         if requester_qq:
@@ -492,6 +491,17 @@ class Main(Star):
 
         default_hint = f"\n✨ 已自动设为默认数字群友" if is_first else ""
 
+        batch_count = persona.get('batch_count', 0)
+        total_planned = persona.get('total_batches_planned', batch_count)
+        early_stopped = persona.get('early_stopped', False)
+
+        efficiency_info = ""
+        if total_planned > batch_count:
+            saved = total_planned - batch_count
+            efficiency_info = f"\n⚡ 早停节省: {saved} 次API请求"
+        elif batch_count > 0:
+            efficiency_info = f"\n📊 分析批次: {batch_count}"
+
         yield event.plain_result(
             f"✅ 人格克隆完成！\n"
             f"━━━━━━━━━━━━━━━\n"
@@ -499,17 +509,18 @@ class Main(Star):
             f"样本: {len(messages)} 条消息\n"
             f"性格: {persona.get('personality', '未知')}\n"
             f"━━━━━━━━━━━━━━━\n"
-            f"/mb 询问 {alias} 问题 - 模仿对话\n"
-            f"/mb 唤醒 {alias} - 持续对话{default_hint}"
+            f"{efficiency_info}\n"
+            f" /dm 询问 {alias} 问题 - 模仿对话\n"
+            f" /dm 唤醒 {alias} - 持续对话{default_hint}"
         )
 
     # ===== 询问指令 =====
 
-    @mb.command("询问", alias={"ask", "对话", "聊天", "talk", "chat"})
+    @dm.command("询问", alias={"ask", "对话", "聊天", "talk", "chat"})
     async def ask(self, event: AstrMessageEvent):
         """模仿群友回答问题
 
-        用法: /mb 询问 @群友/QQ号/代称 问题内容
+        用法: /dm 询问 @群友/QQ号/代称 问题内容
         """
         group_id = event.message_obj.group_id
         if not group_id:
@@ -528,7 +539,7 @@ class Main(Star):
             elif isinstance(component, Comp.Plain):
                 text = component.text.strip()
                 for cmd in ["询问", "ask", "对话", "聊天", "talk", "chat"]:
-                    text = text.replace(f"/mb {cmd}", "").replace(f"/群友 {cmd}", "")
+                    text = text.replace(f"/dm {cmd}", "").replace(f"/群友 {cmd}", "")
                 text = text.strip()
 
                 if not found_identifier and text:
@@ -558,11 +569,11 @@ class Main(Star):
 
     # ===== 唤醒指令 =====
 
-    @mb.command("唤醒", alias={"awake", "wakeup"})
+    @dm.command("唤醒", alias={"awake", "wakeup"})
     async def awake(self, event: AstrMessageEvent):
         """进入持续唤醒模式
 
-        用法: /mb 唤醒 @群友/QQ号/代称
+        用法: /dm 唤醒 @群友/QQ号/代称
         """
         group_id = event.message_obj.group_id
         if not group_id:
@@ -579,7 +590,7 @@ class Main(Star):
                 target_qq = str(component.qq)
             elif isinstance(component, Comp.Plain):
                 text = component.text.strip()
-                text = text.replace("/mb 唤醒", "").replace("/群友 唤醒", "").strip()
+                text = text.replace("/dm 唤醒", "").replace("/群友 唤醒", "").strip()
                 if text:
                     # 尝试通过代称查找
                     qq = await self.storage.get_qq_by_alias(text, group_id)
@@ -597,7 +608,7 @@ class Main(Star):
         if not persona:
             if not alias:
                 alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
-            yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /mb 分析")
+            yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /dm 分析")
             return
 
         if not alias:
@@ -609,12 +620,12 @@ class Main(Star):
             f"✅ 已唤醒 {alias}\n\n"
             f"▸ @{alias} 或消息包含 \"{alias}\" 才会回复\n"
             f"▸ 超时 {self.session_timeout} 分钟自动休眠\n"
-            f"▸ 使用 /mb 休眠 手动结束"
+            f"▸ 使用 /dm 休眠 手动结束"
         )
 
     # ===== 休眠指令 =====
 
-    @mb.command("休眠", alias={"sleep"})
+    @dm.command("休眠", alias={"sleep"})
     async def sleep(self, event: AstrMessageEvent):
         """退出持续唤醒模式"""
         group_id = event.message_obj.group_id
@@ -632,7 +643,7 @@ class Main(Star):
 
     # ===== 画像指令 =====
 
-    @mb.command("画像", alias={"profile"})
+    @dm.command("画像", alias={"profile"})
     async def profile(self, event: AstrMessageEvent):
         """查看群友画像详情"""
         group_id = event.message_obj.group_id
@@ -692,7 +703,7 @@ class Main(Star):
 
     # ===== 列表指令 =====
 
-    @mb.command("列表", alias={"list"})
+    @dm.command("列表", alias={"list"})
     async def list_personas(self, event: AstrMessageEvent):
         """已克隆的群友列表"""
         group_id = event.message_obj.group_id
@@ -703,7 +714,7 @@ class Main(Star):
         personas = await self.storage.list_personas_by_group(group_id)
 
         if not personas:
-            yield event.plain_result("本群还没有克隆任何群友\n使用 /mb 分析 @群友 代称 开始克隆")
+            yield event.plain_result("本群还没有克隆任何群友\n使用 /dm 分析 @群友 代称 开始克隆")
             return
 
         lines = [f"【本群已克隆的群友】\n"]
@@ -718,11 +729,11 @@ class Main(Star):
 
         yield event.plain_result("\n".join(lines))
 
-    @mb.command("默认", alias={"default"})
+    @dm.command("默认", alias={"default"})
     async def set_default(self, event: AstrMessageEvent):
         """设置本群的默认数字群友
 
-        用法: /mb 默认 @群友/QQ号/代称
+        用法: /dm 默认 @群友/QQ号/代称
         不带参数时显示当前默认群友
         """
         group_id = event.message_obj.group_id
@@ -739,23 +750,23 @@ class Main(Star):
                 alias = default.get("alias", qq)
                 yield event.plain_result(f"当前默认数字群友: {alias} ({qq})")
             else:
-                yield event.plain_result("本群尚未设置默认数字群友\n使用 /mb 默认 @群友 设置")
+                yield event.plain_result("本群尚未设置默认数字群友\n使用 /dm 默认 @群友 设置")
             return
 
         persona = await self.storage.load_persona(target_qq, group_id)
         if not persona:
             alias = await self.storage.get_alias_by_qq(target_qq, group_id) or target_qq
-            yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /mb 分析")
+            yield event.plain_result(f"未找到 {alias} 的画像，请先使用 /dm 分析")
             return
 
         alias = persona.get('alias', target_qq)
         await self.storage.set_default_persona(group_id, target_qq, alias)
 
-        yield event.plain_result(f"✅ 已设置 {alias} 为本群的默认数字群友\n使用 /mbb 可直接与其对话")
+        yield event.plain_result(f"✅ 已设置 {alias} 为本群的默认数字群友\n使用 /dmt 可直接与其对话")
 
     # ===== 删除指令 =====
 
-    @mb.command("删除", alias={"delete", "del"})
+    @dm.command("删除", alias={"delete", "del"})
     async def delete(self, event: AstrMessageEvent):
         """删除群友画像
 
@@ -855,7 +866,7 @@ class Main(Star):
 
     # ===== 清空指令 =====
 
-    @mb.command("清空", alias={"clear"})
+    @dm.command("清空", alias={"clear"})
     async def clear_history(self, event: AstrMessageEvent):
         """清空对话历史"""
         group_id = event.message_obj.group_id
@@ -882,11 +893,11 @@ class Main(Star):
 
     # ===== 称呼指令 =====
 
-    @mb.command("称呼", alias={"rename", "alias"})
+    @dm.command("称呼", alias={"rename", "alias"})
     async def rename_persona(self, event: AstrMessageEvent):
         """修改群友的称呼
 
-        用法: /mb 称呼 @群友/QQ号/原昵称 新昵称
+        用法: /dm 称呼 @群友/QQ号/原昵称 新昵称
         """
         group_id = event.message_obj.group_id
         if not group_id:
@@ -906,7 +917,7 @@ class Main(Star):
             elif isinstance(component, Comp.Plain):
                 text = component.text.strip()
                 for cmd in ["称呼", "rename", "alias"]:
-                    text = text.replace(f"/mb {cmd}", "").replace(f"/群友 {cmd}", "")
+                    text = text.replace(f"/dm {cmd}", "").replace(f"/群友 {cmd}", "")
                 if text.strip():
                     text_parts.append(text.strip())
 
@@ -929,12 +940,12 @@ class Main(Star):
             return
 
         if not new_alias:
-            yield event.plain_result("请指定新的称呼\n用法: /mb 称呼 @群友/QQ号/原昵称 新昵称")
+            yield event.plain_result("请指定新的称呼\n用法: /dm 称呼 @群友/QQ号/原昵称 新昵称")
             return
 
         persona = await self.storage.load_persona(target_qq, group_id)
         if not persona:
-            yield event.plain_result(f"未找到该群友的画像，请先使用 /mb 分析")
+            yield event.plain_result(f"未找到该群友的画像，请先使用 /dm 分析")
             return
 
         old_alias = persona.get('alias', target_qq)

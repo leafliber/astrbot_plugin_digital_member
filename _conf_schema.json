@@ -6,99 +6,38 @@
     "options": ["7天", "30天", "90天", "全部"]
   },
   "analyze_provider_id": {
-    "description": "分析画像使用的LLM提供商ID（留空使用默认提供商）",
+    "description": "分析画像使用的LLM提供商（留空使用默认提供商）",
     "type": "string",
     "default": "",
     "_special": "select_provider"
   },
   "conversation_provider_id": {
-    "description": "对话聊天使用的LLM提供商ID（留空使用默认提供商）",
+    "description": "对话聊天使用的LLM提供商（留空使用默认提供商）",
     "type": "string",
     "default": "",
     "_special": "select_provider"
   },
   "summary_provider_id": {
-    "description": "对话压缩摘要使用的LLM提供商ID（留空使用默认提供商）",
+    "description": "对话压缩摘要使用的LLM提供商（留空使用默认提供商）",
     "type": "string",
     "default": "",
     "_special": "select_provider"
   },
-
-  "query": {
-    "description": "消息查询设置",
-    "type": "object",
-    "items": {
-      "max_count": {
-        "description": "查询上限（0=不限制）",
-        "type": "int",
-        "default": 0,
-        "hint": "设为0查询全部历史消息"
-      },
-      "fetch_context": {
-        "description": "是否获取上下文消息",
-        "type": "bool",
-        "default": false,
-        "hint": "获取前后消息作为分析背景"
-      },
-      "context_before": {
-        "description": "获取消息前多少条",
-        "type": "int",
-        "default": 3
-      },
-      "context_after": {
-        "description": "获取消息后多少条",
-        "type": "int",
-        "default": 3
-      }
-    }
+  "query_max_count": {
+    "description": "消息查询上限（0=不限制，获取全部历史消息）",
+    "type": "int",
+    "default": 0,
+    "hint": "设为0获取全部消息；设为正数可限制查询量以节省时间"
   },
-
-  "analysis": {
-    "description": "画像分析设置",
-    "type": "object",
-    "items": {
-      "batch_size": {
-        "description": "每批次分析消息数",
-        "type": "int",
-        "default": 100,
-        "hint": "每批送给LLM分析的消息数量"
-      },
-      "mode": {
-        "description": "分析模式",
-        "type": "string",
-        "default": "batch_summarize",
-        "options": ["single", "batch_summarize"],
-        "hint": "single 取样本一次性分析，可能因上下文过长导致失败；batch_summarize 分批次后汇总更稳定"
-      },
-      "batch_delay_ms": {
-        "description": "批次间延迟（毫秒）",
-        "type": "int",
-        "default": 1000,
-        "hint": "避免API限速，建议1000以上"
-      }
-    }
+  "fetch_context": {
+    "description": "获取消息上下文（分析时包含前后对话作为背景）",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后分析更准确，但查询耗时更长"
   },
-
-  "conversation": {
-    "description": "对话管理设置",
-    "type": "object",
-    "items": {
-      "max_history_turns": {
-        "description": "每个人格保留的最大对话轮数",
-        "type": "int",
-        "default": 20
-      },
-      "compress_threshold": {
-        "description": "达到此轮数触发自动压缩",
-        "type": "int",
-        "default": 15,
-        "hint": "对话历史超过此值时自动压缩旧对话"
-      },
-      "session_timeout_minutes": {
-        "description": "持续唤醒模式无活动自动休眠时间（分钟）",
-        "type": "int",
-        "default": 5
-      }
-    }
+  "session_timeout_minutes": {
+    "description": "唤醒模式无活动自动休眠时间（分钟）",
+    "type": "int",
+    "default": 5
   }
 }
