@@ -38,7 +38,7 @@ class Main(Star):
         # 内部参数（已优化为合理默认值，不暴露给用户）
         self.context_before = 3
         self.context_after = 3
-        self.sample_max = 600
+        self.sample_max = 1000
         self.batch_size = 100
         self.analysis_mode = "batch_summarize"
         self.batch_delay_ms = 1000
@@ -498,9 +498,9 @@ class Main(Star):
         efficiency_info = ""
         if total_planned > batch_count:
             saved = total_planned - batch_count
-            efficiency_info = f"\n⚡ 早停节省: {saved} 次API请求"
+            efficiency_info = f"⚡ 早停节省: {saved} 次API请求"
         elif batch_count > 0:
-            efficiency_info = f"\n📊 分析批次: {batch_count}"
+            efficiency_info = f"📊 分析批次: {batch_count}"
 
         yield event.plain_result(
             f"✅ 人格克隆完成！\n"

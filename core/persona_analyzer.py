@@ -50,7 +50,10 @@ class PersonaAnalyzer:
         if mode == "single":
             sample = messages[-min(batch_size, len(messages)):]
             logger.info(f"[人格分析] 取样本 {len(sample)} 条进行一次性分析")
-            return await self._analyze_batch(sample, provider_id)
+            result = await self._analyze_batch(sample, provider_id)
+            logger.info(f"[人格分析] 画像生成完成: 性格={result.get('personality', '未知')}, 风格={result.get('speaking_style', '未知')}")
+            logger.info(f"[人格分析] 口头禅={result.get('catchphrases', [])}, 兴趣={result.get('interests', [])}, 典型回复数={len(result.get('typical_responses', []))}")
+            return result
 
         budget = token_budget if token_budget > 0 else self.TOKEN_BUDGET_PER_BATCH
         batches = self._create_token_aware_batches(messages, budget)
@@ -170,6 +173,10 @@ class PersonaAnalyzer:
         final_persona['total_batches_planned'] = len(batches)
         final_persona['early_stopped'] = converged
 
+        logger.info(f"[人格分析] 画像生成完成: 性格={final_persona.get('personality', '未知')}, 风格={final_persona.get('speaking_style', '未知')}")
+        logger.info(f"[人格分析] 口头禅={final_persona.get('catchphrases', [])}, 兴趣={final_persona.get('interests', [])}, 典型回复数={len(final_persona.get('typical_responses', []))}")
+        logger.info(f"[人格分析] 统计: 消息={total_msg_count}, 批次={len(batch_results)}/{len(batches)}, 早停={'是' if converged else '否'}")
+
         return final_persona
 
     def _compute_convergence(self, results: list) -> float:
@@ -272,7 +279,9 @@ class PersonaAnalyzer:
             logger.debug(f"[人格分析] 批次 LLM响应长度: {len(response_text)}")
             logger.debug(f"[人格分析] 批次 LLM响应预览: {response_text[:200]}...")
 
-            return self._parse_response(response_text, len(batch))
+            result = self._parse_response(response_text, len(batch))
+            logger.info(f"[人格分析] 批次分析完成: 性格={result.get('personality', '未知')}, 口头禅数={len(result.get('catchphrases', []))}, 典型回复数={len(result.get('typical_responses', []))}")
+            return result
 
         except Exception as e:
             logger.error(f"[人格分析] 批次 LLM调用失败: {e}")
@@ -375,6 +384,7 @@ class PersonaAnalyzer:
             return self._get_default_persona()
 
     def _parse_response(self, response_text: str, message_count: int) -> dict:
+        parse_failed = False
         try:
             persona = json.loads(response_text)
         except json.JSONDecodeError:
@@ -383,17 +393,28 @@ class PersonaAnalyzer:
                 try:
                     persona = json.loads(json_str)
                 except json.JSONDecodeError:
+                    parse_failed = True
                     persona = self._get_default_persona()
             else:
+                parse_failed = True
                 persona = self._get_default_persona()
+
+        if parse_failed:
+            logger.warning("[人格分析] LLM响应JSON解析失败，使用默认画像")
+            logger.debug(f"[人格分析] 原始响应前500字符: {response_text[:500]}")
 
         required_fields = [
             'personality', 'speaking_style', 'catchphrases', 'interests', 'emoji_usage',
             'tone', 'sentence_pattern', 'punctuation', 'values', 'emotional_pattern', 'typical_responses'
         ]
+        missing_fields = []
         for field in required_fields:
             if field not in persona:
+                missing_fields.append(field)
                 persona[field] = self._get_default_persona().get(field)
+
+        if missing_fields:
+            logger.debug(f"[人格分析] 缺失字段已补默认值: {missing_fields}")
 
         if not isinstance(persona.get('catchphrases'), list):
             persona['catchphrases'] = []
@@ -405,10 +426,7 @@ class PersonaAnalyzer:
         persona['message_count'] = message_count
         persona['created_at'] = None
 
-        logger.info(f"[人格分析] 画像生成完成: {persona.get('personality', '未知')}")
-        logger.debug(f"[人格分析] 画像详情: 性格={persona.get('personality')}, 风格={persona.get('speaking_style')}")
-        logger.debug(f"[人格分析] 口头禅={persona.get('catchphrases')}, 兴趣={persona.get('interests')}")
-        logger.debug(f"[人格分析] 典型回复数={len(persona.get('typical_responses', []))}")
+        logger.debug(f"[人格分析] 批次解析结果: 性格={persona.get('personality')}, 风格={persona.get('speaking_style')}, 口头禅={persona.get('catchphrases')}, 兴趣={persona.get('interests')}, 典型回复数={len(persona.get('typical_responses', []))}")
 
         return persona
 

@@ -12,7 +12,7 @@ from astrbot.api.star import Context
 class MessageCollector:
     """消息收集器 - 使用 astrbot_plugin_message_recorder API"""
 
-    DEFAULT_SAMPLE_MAX = 600
+    DEFAULT_SAMPLE_MAX = 1000
     DEFAULT_QUALITY_MIN_LENGTH = 2
 
     def __init__(
