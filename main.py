@@ -256,11 +256,13 @@ class Main(Star):
 
         history = await self.conversation_manager.get_history(target_qq, group_id)
 
+        cleaned_question = self._clean_question_for_context(question)
+
         logger.debug(f"[数字群友] 询问目标: {alias} (QQ:{target_qq})")
-        logger.debug(f"[数字群友] 问题: {question}")
+        logger.debug(f"[数字群友] 问题: {question} → 清洗后: {cleaned_question}")
         logger.debug(f"[数字群友] 历史轮数: {len(history)}")
 
-        prompt = self.prompt_generator.generate(persona, question, history, alias)
+        prompt = self.prompt_generator.generate(persona, cleaned_question, history, alias)
         logger.debug(f"[数字群友] Prompt长度: {len(prompt)}")
 
         try:
@@ -270,7 +272,7 @@ class Main(Star):
                 prov_id = await self.context.get_current_chat_provider_id(umo=umo)
             logger.debug(f"[数字群友] 使用LLM提供商: {prov_id}")
 
-            await self.conversation_manager.add_message(target_qq, group_id, 'user', question, provider_id=prov_id)
+            await self.conversation_manager.add_message(target_qq, group_id, 'user', cleaned_question, provider_id=prov_id)
 
             llm_resp = await self.context.llm_generate(
                 chat_provider_id=prov_id,
@@ -961,13 +963,19 @@ class Main(Star):
 
     # ===== 群消息监听（持续唤醒） =====
 
+    COMMAND_PREFIXES = ('/', '#', '!', '.', '！')
+    COMMAND_KEYWORDS = ('dm ', 'dmk', '群友', 'dmt')
+
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def on_group_message(self, event: AstrMessageEvent):
         """处理群消息，支持持续唤醒模式"""
         group_id = event.message_obj.group_id
 
         message_text = event.message_str.strip()
-        if not message_text or message_text.startswith("/"):
+        if not message_text:
+            return
+
+        if self._is_command_message(message_text):
             logger.debug(f"[数字群友] 跳过指令消息: {message_text[:50]}...")
             return
 
@@ -1083,6 +1091,62 @@ class Main(Star):
         return False
 
     # ===== 辅助方法 =====
+
+    def _is_command_message(self, text: str) -> bool:
+        """判断消息是否是指令消息
+
+        检查规则：
+        1. 以常见指令前缀开头（/ # ! . ！）
+        2. 消息开头包含本插件的指令关键词
+
+        Args:
+            text: 消息文本
+
+        Returns:
+            是否是指令消息
+        """
+        if text.startswith(self.COMMAND_PREFIXES):
+            return True
+
+        text_lower = text.lower()
+        for kw in self.COMMAND_KEYWORDS:
+            if text_lower.startswith(kw) or text_lower.startswith(f'/{kw}') or text_lower.startswith(f'/{kw}'):
+                return True
+
+        return False
+
+    def _clean_question_for_context(self, question: str) -> str:
+        """清洗存入上下文的问题文本，去除指令残留
+
+        避免上下文中出现 /dm 询问 xxx、/dmk 等指令文本，
+        只保留用户实际想说的内容。
+
+        Args:
+            question: 原始问题文本
+
+        Returns:
+            清洗后的文本
+        """
+        import re
+
+        cleaned = question
+
+        patterns = [
+            r'^/dm\s+(?:询问|ask|对话|聊天|talk|chat)\s+\S+\s*',
+            r'^/dmk\s*',
+            r'^/dmt\s*',
+            r'^/dm\s+\S+\s*',
+            r'^/群友\s+(?:询问|ask|对话|聊天|talk|chat)\s+\S+\s*',
+            r'^/群友\s+\S+\s*',
+        ]
+
+        for pattern in patterns:
+            new_cleaned = re.sub(pattern, '', cleaned).strip()
+            if new_cleaned != cleaned:
+                cleaned = new_cleaned
+                break
+
+        return cleaned if cleaned else question
 
     async def _parse_target(self, event: AstrMessageEvent, group_id: str) -> str | None:
         """解析消息链中的目标用户标识
