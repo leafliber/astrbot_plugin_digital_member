@@ -15,3 +15,7 @@ astrbot_version: ">=4.16,<5"
 # 插件依赖
 dependencies:
   - "astrbot_plugin_message_recorder"
+
+# 可选依赖（增强功能，未安装时不影响基本使用）
+optional_dependencies:
+  - "astrbot_plugin_iris_chat_memory"

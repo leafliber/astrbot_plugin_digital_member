@@ -39,5 +39,35 @@
     "description": "唤醒模式无活动自动休眠时间（分钟）",
     "type": "int",
     "default": 5
+  },
+  "analyze_interval": {
+    "description": "分析队列间隔（秒），同一群内两次分析之间的最小间隔",
+    "type": "float",
+    "default": 1.0,
+    "hint": "增大此值可降低分析频率，避免LLM过载；设为0则无额外间隔"
+  },
+  "send_interval": {
+    "description": "发送队列间隔（秒），同一群内两条消息之间的最小间隔",
+    "type": "float",
+    "default": 2.0,
+    "hint": "增大此值可降低发送频率，避免消息刷屏；设为0则无额外间隔"
+  },
+  "use_agent_mode": {
+    "description": "启用 Agent 模式进行对话（支持工具调用）",
+    "type": "bool",
+    "default": false,
+    "hint": "启用后使用 tool_loop_agent 替代 llm_generate，支持挂载记忆工具等扩展能力"
+  },
+  "iris_memory_tools": {
+    "description": "挂载 iris_chat_memory 的记忆查询工具（需安装 astrbot_plugin_iris_chat_memory 插件）",
+    "type": "bool",
+    "default": false,
+    "hint": "启用后 Agent 可调用 search_memory、search_knowledge_graph、get_profile 工具获取长期记忆；需同时开启 Agent 模式"
+  },
+  "agent_max_steps": {
+    "description": "Agent 模式最大执行步骤数",
+    "type": "int",
+    "default": 10,
+    "hint": "限制 Agent 工具调用循环次数，防止无限循环；建议5-20"
   }
 }

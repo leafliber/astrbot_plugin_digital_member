@@ -16,6 +16,7 @@ from .core.persona_analyzer import PersonaAnalyzer
 from .core.session_manager import SessionManager
 from .core.prompt_generator import PromptGenerator
 from .core.conversation_manager import PersonaConversationManager
+from .core.group_queue import GroupQueueManager
 from .utils.storage import PersonaStorage
 
 
@@ -34,6 +35,11 @@ class Main(Star):
         self.query_max_count = config.get("query_max_count", 0)
         self.fetch_context = config.get("fetch_context", False)
         self.session_timeout = config.get("session_timeout_minutes", 5)
+        self.analyze_interval = config.get("analyze_interval", 1.0)
+        self.send_interval = config.get("send_interval", 2.0)
+        self.use_agent_mode = config.get("use_agent_mode", False)
+        self.iris_memory_tools = config.get("iris_memory_tools", False)
+        self.agent_max_steps = config.get("agent_max_steps", 10)
 
         # 内部参数（已优化为合理默认值，不暴露给用户）
         self.context_before = 3
@@ -58,6 +64,10 @@ class Main(Star):
         )
         self.persona_analyzer = PersonaAnalyzer(context)
         self.session_manager = SessionManager(self.session_timeout)
+        self.queue_manager = GroupQueueManager(
+            analyze_interval=self.analyze_interval,
+            send_interval=self.send_interval,
+        )
         self.prompt_generator = PromptGenerator()
         self.conversation_manager = PersonaConversationManager(
             self.storage,
@@ -77,10 +87,11 @@ class Main(Star):
         return min(base_delay + random_offset, 8.0)
 
     async def _send_segmented_messages(self, event: AstrMessageEvent, messages: list[str], alias: str):
-        """分段发送消息：第一条回复，后续直接发送，带延迟"""
+        """分段发送消息：第一条回复，后续通过发送队列逐条发送"""
         if not messages:
             return
 
+        group_id = event.message_obj.group_id
         first_msg = f"[{alias}]{messages[0]}"
         yield event.plain_result(first_msg)
 
@@ -91,12 +102,15 @@ class Main(Star):
         umo = event.unified_msg_origin
 
         for msg in messages[1:]:
-            delay = self._calculate_delay(msg)
-            logger.debug(f"[数字群友] 延迟 {delay:.2f}s 后发送下一条消息")
-            await asyncio.sleep(delay)
             full_msg = f"[{alias}]{msg}"
-            chain = MessageChain().message(full_msg)
-            await self.context.send_message(umo, chain)
+            delay = self._calculate_delay(msg)
+
+            async def _send_message(m=full_msg, d=delay, u=umo):
+                await asyncio.sleep(d)
+                chain = MessageChain().message(m)
+                await self.context.send_message(u, chain)
+
+            await self.queue_manager.submit_send(group_id, _send_message)
 
     # ===== 指令组注册 =====
 
@@ -262,9 +276,6 @@ class Main(Star):
         logger.debug(f"[数字群友] 问题: {question} → 清洗后: {cleaned_question}")
         logger.debug(f"[数字群友] 历史轮数: {len(history)}")
 
-        prompt = self.prompt_generator.generate(persona, cleaned_question, history, alias)
-        logger.debug(f"[数字群友] Prompt长度: {len(prompt)}")
-
         try:
             umo = event.unified_msg_origin
             prov_id = self.conversation_provider_id
@@ -272,18 +283,21 @@ class Main(Star):
                 prov_id = await self.context.get_current_chat_provider_id(umo=umo)
             logger.debug(f"[数字群友] 使用LLM提供商: {prov_id}")
 
-            await self.conversation_manager.add_message(target_qq, group_id, 'user', cleaned_question, provider_id=prov_id)
-
-            llm_resp = await self.context.llm_generate(
-                chat_provider_id=prov_id,
-                prompt=prompt,
-            )
-
-            response = llm_resp.completion_text
-            logger.debug(f"[数字群友] LLM响应长度: {len(response)}")
-            logger.debug(f"[数字群友] LLM响应预览: {response[:100]}...")
-
-            await self.conversation_manager.add_message(target_qq, group_id, 'assistant', response, provider_id=prov_id)
+            if self.use_agent_mode:
+                response = await self.queue_manager.submit_analysis(
+                    group_id,
+                    lambda tq=target_qq, gid=group_id, pid=prov_id, cq=cleaned_question,
+                           p=persona, h=history, a=alias, ev=event:
+                        self._do_ask_agent(tq, gid, pid, cq, p, h, a, ev)
+                )
+            else:
+                prompt = self.prompt_generator.generate(persona, cleaned_question, history, alias)
+                logger.debug(f"[数字群友] Prompt长度: {len(prompt)}")
+                response = await self.queue_manager.submit_analysis(
+                    group_id,
+                    lambda tq=target_qq, gid=group_id, p=prompt, pid=prov_id, cq=cleaned_question:
+                        self._do_ask_analysis(tq, gid, p, pid, cq)
+                )
 
             messages = self.prompt_generator.split_messages(response)
             async for result in self._send_segmented_messages(event, messages, alias):
@@ -292,6 +306,122 @@ class Main(Star):
         except Exception as e:
             logger.error(f"[数字群友] AI调用失败: {e}")
             yield event.plain_result(f"回答生成失败: {e}")
+
+    async def _do_ask_analysis(self, target_qq: str, group_id: str, prompt: str, prov_id: str, cleaned_question: str) -> str:
+        """执行 LLM 分析（在分析队列中运行）
+
+        Args:
+            target_qq: 目标人格的 QQ 号
+            group_id: 群号
+            prompt: 生成的 prompt
+            prov_id: LLM 提供商 ID
+            cleaned_question: 清洗后的问题
+
+        Returns:
+            LLM 响应文本
+        """
+        await self.conversation_manager.add_message(target_qq, group_id, 'user', cleaned_question, provider_id=prov_id)
+
+        llm_resp = await self.context.llm_generate(
+            chat_provider_id=prov_id,
+            prompt=prompt,
+        )
+
+        response = llm_resp.completion_text
+        logger.debug(f"[数字群友] LLM响应长度: {len(response)}")
+        logger.debug(f"[数字群友] LLM响应预览: {response[:100]}...")
+
+        await self.conversation_manager.add_message(target_qq, group_id, 'assistant', response, provider_id=prov_id)
+
+        return response
+
+    async def _do_ask_agent(self, target_qq: str, group_id: str, prov_id: str, cleaned_question: str, persona: dict, history: list, alias: str, event: AstrMessageEvent) -> str:
+        """执行 Agent 模式对话（在分析队列中运行）
+
+        Args:
+            target_qq: 目标人格的 QQ 号
+            group_id: 群号
+            prov_id: LLM 提供商 ID
+            cleaned_question: 清洗后的问题
+            persona: 人格画像
+            history: 对话历史
+            alias: 代称
+            event: 消息事件
+
+        Returns:
+            LLM 响应文本
+        """
+        from astrbot.core.agent.tool import ToolSet
+
+        await self.conversation_manager.add_message(target_qq, group_id, 'user', cleaned_question, provider_id=prov_id)
+
+        enable_iris = self.iris_memory_tools
+        system_prompt = self.prompt_generator.generate_agent_system_prompt(
+            persona, history, alias, enable_iris_tools=enable_iris
+        )
+
+        tools = ToolSet()
+        if enable_iris:
+            iris_tools = self._get_iris_tools()
+            if iris_tools:
+                tools = ToolSet(iris_tools)
+                logger.debug(f"[数字群友-Agent] 已挂载 {len(iris_tools)} 个 iris_chat_memory 工具")
+            else:
+                logger.warning("[数字群友-Agent] 未发现 iris_chat_memory 工具，请确保已安装 astrbot_plugin_iris_chat_memory 插件")
+
+        logger.debug(f"[数字群友-Agent] system_prompt长度: {len(system_prompt)}, tools数量: {len(tools.func_list) if hasattr(tools, 'func_list') else 0}")
+
+        llm_resp = await self.context.tool_loop_agent(
+            event=event,
+            chat_provider_id=prov_id,
+            prompt=cleaned_question,
+            system_prompt=system_prompt,
+            tools=tools,
+            max_steps=self.agent_max_steps,
+        )
+
+        response = llm_resp.completion_text
+        logger.debug(f"[数字群友-Agent] LLM响应长度: {len(response)}")
+        logger.debug(f"[数字群友-Agent] LLM响应预览: {response[:100]}...")
+
+        await self.conversation_manager.add_message(target_qq, group_id, 'assistant', response, provider_id=prov_id)
+
+        return response
+
+    def _get_iris_tools(self) -> list:
+        """发现并返回 iris_chat_memory 注册的 LLM 工具
+
+        Returns:
+            iris_chat_memory 工具列表，未找到则返回空列表
+        """
+        iris_tool_names = {
+            "search_memory",
+            "search_knowledge_graph",
+            "get_profile",
+        }
+
+        try:
+            tool_mgr = self.context.provider_manager.llm_tools
+            if not tool_mgr or not hasattr(tool_mgr, 'func_list'):
+                logger.debug("[数字群友] 未找到 LLM 工具管理器")
+                return []
+
+            found_tools = []
+            for tool in tool_mgr.func_list:
+                tool_name = getattr(tool, 'name', '')
+                if tool_name in iris_tool_names:
+                    found_tools.append(tool)
+
+            if found_tools:
+                logger.info(f"[数字群友] 发现 {len(found_tools)} 个 iris_chat_memory 工具: {[t.name for t in found_tools]}")
+            else:
+                logger.debug("[数字群友] 未发现 iris_chat_memory 工具")
+
+            return found_tools
+
+        except Exception as e:
+            logger.warning(f"[数字群友] 发现 iris_chat_memory 工具时出错: {e}")
+            return []
 
     # ===== 分析指令（一键克隆） =====
 
@@ -461,22 +591,17 @@ class Main(Star):
         # 获取 LLM 提供商 ID
         provider_id = self.analyze_provider_id
         if not provider_id:
-            # 未配置时，使用当前会话的默认提供商
             umo = event.unified_msg_origin
             provider_id = await self.context.get_current_chat_provider_id(umo=umo)
             logger.debug(f"[人格克隆] 使用默认提供商: {provider_id}")
         else:
             logger.debug(f"[人格克隆] 使用配置的提供商: {provider_id}")
 
-        # 分析生成画像（Token感知分批 + 早停收敛）
-        persona = await self.persona_analyzer.analyze(
-            messages,
-            provider_id=provider_id,
-            batch_size=self.batch_size,
-            mode=self.analysis_mode,
-            batch_delay_ms=self.batch_delay_ms,
-            token_budget=self.token_budget,
-            enable_early_stop=self.enable_early_stop,
+        # 通过分析队列执行画像分析（保证单群不并发）
+        persona = await self.queue_manager.submit_analysis(
+            group_id,
+            lambda msgs=messages, pid=provider_id:
+                self._do_clone_analysis(msgs, pid)
         )
         persona['alias'] = alias
         if requester_qq:
@@ -514,6 +639,26 @@ class Main(Star):
             f"{efficiency_info}\n"
             f" /dm 询问 {alias} 问题 - 模仿对话\n"
             f" /dm 唤醒 {alias} - 持续对话{default_hint}"
+        )
+
+    async def _do_clone_analysis(self, messages: list, provider_id: str) -> dict:
+        """执行克隆画像分析（在分析队列中运行）
+
+        Args:
+            messages: 消息列表
+            provider_id: LLM 提供商 ID
+
+        Returns:
+            人格画像字典
+        """
+        return await self.persona_analyzer.analyze(
+            messages,
+            provider_id=provider_id,
+            batch_size=self.batch_size,
+            mode=self.analysis_mode,
+            batch_delay_ms=self.batch_delay_ms,
+            token_budget=self.token_budget,
+            enable_early_stop=self.enable_early_stop,
         )
 
     # ===== 询问指令 =====
@@ -1180,8 +1325,9 @@ class Main(Star):
 
     async def terminate(self):
         """插件卸载时清理"""
-        # 取消所有活跃会话
         for group_id in self.session_manager.get_active_groups():
             await self.session_manager.deactivate(group_id)
+
+        await self.queue_manager.shutdown()
 
         logger.info("[数字群友] 插件已卸载")
