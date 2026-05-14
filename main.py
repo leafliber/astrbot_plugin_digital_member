@@ -40,6 +40,8 @@ class Main(Star):
         self.use_agent_mode = config.get("use_agent_mode", False)
         self.iris_memory_tools = config.get("iris_memory_tools", False)
         self.agent_max_steps = config.get("agent_max_steps", 10)
+        self.smart_sampling = config.get("smart_sampling", False)
+        self.early_stop = config.get("early_stop", False)
 
         # 内部参数（已优化为合理默认值，不暴露给用户）
         self.context_before = 3
@@ -49,7 +51,6 @@ class Main(Star):
         self.analysis_mode = "batch_summarize"
         self.batch_delay_ms = 1000
         self.token_budget = 3000
-        self.enable_early_stop = True
         self.max_history_turns = 20
         self.compress_threshold = 15
 
@@ -85,6 +86,20 @@ class Main(Star):
         base_delay = char_count * random.uniform(0.08, 0.15)
         random_offset = random.uniform(1.0, 3.0)
         return min(base_delay + random_offset, 8.0)
+
+    @staticmethod
+    def _strip_response_prefix(text: str, alias: str) -> str:
+        """清洗 LLM 响应中可能重复的名字前缀
+
+        LLM 有时会在回复开头重复 prompt 中的名字标识，
+        如「角色：消息内容」或「[角色]消息内容」，
+        而 _send_segmented_messages 会统一添加 [alias] 前缀，
+        因此需要先清洗掉这些重复前缀。
+        """
+        import re
+        text = re.sub(r'^\[.+?\]\s*', '', text)
+        text = re.sub(rf'^{re.escape(alias)}[：:]\s*', '', text)
+        return text.strip()
 
     async def _send_segmented_messages(self, event: AstrMessageEvent, messages: list[str], alias: str):
         """分段发送消息：第一条回复，后续通过发送队列逐条发送"""
@@ -300,6 +315,7 @@ class Main(Star):
                 )
 
             messages = self.prompt_generator.split_messages(response)
+            messages = [self._strip_response_prefix(msg, alias) for msg in messages]
             async for result in self._send_segmented_messages(event, messages, alias):
                 yield result
 
@@ -582,6 +598,7 @@ class Main(Star):
             sender_id=target_qq,
             group_id=group_id,
             time_range=days,
+            smart_sampling=self.smart_sampling,
         )
 
         if not messages:
@@ -658,7 +675,7 @@ class Main(Star):
             mode=self.analysis_mode,
             batch_delay_ms=self.batch_delay_ms,
             token_budget=self.token_budget,
-            enable_early_stop=self.enable_early_stop,
+            enable_early_stop=self.early_stop,
         )
 
     # ===== 询问指令 =====

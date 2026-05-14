@@ -22,12 +22,14 @@ class MessageCollector:
         context_before: int = 3,
         context_after: int = 3,
         sample_max: int = 0,
+        smart_sampling: bool = False,
     ):
         self.query_max_count = query_max_count
         self.fetch_context = fetch_context
         self.context_before = context_before
         self.context_after = context_after
         self.sample_max = sample_max if sample_max > 0 else self.DEFAULT_SAMPLE_MAX
+        self.smart_sampling = smart_sampling
         self._recorder_api = None
 
     async def get_recorder_api(self, context: Context) -> Optional[object]:
@@ -80,9 +82,11 @@ class MessageCollector:
         context: Context,
         sender_id: str,
         group_id: str,
-        time_range: int | None = 30
+        time_range: int | None = 30,
+        smart_sampling: bool | None = None,
     ) -> list:
-        """收集消息，经过智能采样后返回高质量样本"""
+        """收集消息，根据配置决定是否进行智能采样"""
+        use_sampling = smart_sampling if smart_sampling is not None else self.smart_sampling
         api = await self.get_recorder_api(context)
         if not api:
             logger.error("[消息收集] 未找到 message_recorder 插件，无法获取历史消息")
@@ -120,7 +124,10 @@ class MessageCollector:
                             'content': content.strip()
                         })
                 logger.info(f"[消息收集] 有效消息: {len(messages)} 条")
-                messages = self.smart_sample(messages)
+                if use_sampling:
+                    messages = self.smart_sample(messages)
+                else:
+                    logger.info(f"[消息收集] 智能采样已关闭，保留全部 {len(messages)} 条原始消息")
                 return messages
 
             all_segments = []
@@ -157,7 +164,10 @@ class MessageCollector:
                 logger.warning(f"[消息收集] 消息数量较少({len(all_segments)}个片段)")
                 logger.warning("[消息收集] 可能原因: 1. 用户发言较少; 2. message_recorder 记录时间较短")
 
-            all_segments = self.smart_sample(all_segments)
+            if use_sampling:
+                all_segments = self.smart_sample(all_segments)
+            else:
+                logger.info(f"[消息收集] 智能采样已关闭，保留全部 {len(all_segments)} 个原始对话片段")
             return all_segments
 
         except Exception as e:
@@ -547,11 +557,13 @@ class MessageCollector:
         context: Context,
         sender_id: str,
         group_id: str,
-        time_range: int | None = 30
+        time_range: int | None = 30,
+        smart_sampling: bool | None = None,
     ) -> list:
         return await self.collect_messages_with_context(
             context=context,
             sender_id=sender_id,
             group_id=group_id,
-            time_range=time_range
+            time_range=time_range,
+            smart_sampling=smart_sampling,
         )

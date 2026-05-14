@@ -13,6 +13,12 @@ class PromptGenerator:
 
     CORE_INSTRUCTION = "像真人聊天一样自然回复，不要刻意展示性格特征，不要堆砌口头禅和表情，大部分就是将性格融入普通说话，偶尔会带带口头禅"
 
+    RESPONSE_GUIDE = """回复要求：
+1. 严格遵循说话规则中描述的风格，让回复像这个人自己说出来的
+2. 如果需要发多条消息，用[MSG]分隔，每条1-3句，总条数不超过3条
+3. 多条消息之间要连贯自然——像真人在群里连续发几条消息那样，后一条是前一条的延伸或补充，而不是各自独立
+4. 把对方的话当作群聊对话来回应，自然接话、附和或反驳"""
+
     @staticmethod
     def split_messages(response: str) -> list[str]:
         if not response:
@@ -111,7 +117,7 @@ class PromptGenerator:
 {history_section}
 群里有人说：{question}
 
-重要：{self.CORE_INSTRUCTION}。用[MSG]分隔多条消息，每条1-3句，总条数不超过3条。
+{self.RESPONSE_GUIDE}
 
 {name}："""
 
@@ -148,8 +154,8 @@ class PromptGenerator:
 
 重要规则：
 1. {self.CORE_INSTRUCTION}
-2. 用[MSG]分隔多条消息，每条1-3句，总条数不超过3条
-3. 回复时以 [{name}] 开头"""
+2. {self.RESPONSE_GUIDE}
+3. 直接输出回复内容，不要在开头加上[{name}]或{name}：等标识"""
 
         logger.debug(f"[Prompt生成-Agent] 代称={name}, 性格={p['personality']}, 风格规则数={len(p['style_guide'])}, iris_tools={enable_iris_tools}")
 

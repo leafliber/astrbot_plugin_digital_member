@@ -35,6 +35,18 @@
     "default": false,
     "hint": "开启后分析更准确，但查询耗时更长"
   },
+  "smart_sampling": {
+    "description": "启用智能采样（去重、质量过滤、时间分层采样）",
+    "type": "bool",
+    "default": false,
+    "hint": "关闭时保留全部原始消息，分析结果更完整但耗时更长；开启后自动采样压缩消息量"
+  },
+  "early_stop": {
+    "description": "启用早停收敛检测（分批分析时检测到结果收敛则提前终止）",
+    "type": "bool",
+    "default": false,
+    "hint": "关闭时分析全部批次，结果更稳定但API请求更多；开启后相似度达标即提前终止"
+  },
   "session_timeout_minutes": {
     "description": "唤醒模式无活动自动休眠时间（分钟）",
     "type": "int",
