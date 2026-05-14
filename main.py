@@ -813,11 +813,11 @@ class Main(Star):
 
         alias = persona.get('alias', target_qq)
 
-        typical = persona.get('typical_responses', [])
-        typical_str = ""
-        if typical:
-            typical_lines = [f"  {i+1}. {t}" for i, t in enumerate(typical[:3])]
-            typical_str = "\n\n【典型发言】\n" + "\n".join(typical_lines)
+        style_guide = persona.get('style_guide', [])
+        style_str = ""
+        if style_guide:
+            style_lines = [f"  {i+1}. {rule}" for i, rule in enumerate(style_guide[:6])]
+            style_str = "\n\n【说话规则】\n" + "\n".join(style_lines)
 
         values_str = ""
         if persona.get('values'):
@@ -837,7 +837,7 @@ class Main(Star):
 
 【其他特征】
 ▸ 兴趣: {', '.join(persona.get('interests', [])) or '无'}
-▸ 情绪: {persona.get('emotional_pattern', '稳定')}{values_str}{typical_str}
+▸ 情绪: {persona.get('emotional_pattern', '稳定')}{values_str}{style_str}
 
 【统计信息】
 ▸ 样本消息: {persona.get('message_count', 0)} 条

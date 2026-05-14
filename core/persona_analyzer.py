@@ -52,7 +52,7 @@ class PersonaAnalyzer:
             logger.info(f"[人格分析] 取样本 {len(sample)} 条进行一次性分析")
             result = await self._analyze_batch(sample, provider_id)
             logger.info(f"[人格分析] 画像生成完成: 性格={result.get('personality', '未知')}, 风格={result.get('speaking_style', '未知')}")
-            logger.info(f"[人格分析] 口头禅={result.get('catchphrases', [])}, 兴趣={result.get('interests', [])}, 典型回复数={len(result.get('typical_responses', []))}")
+            logger.info(f"[人格分析] 口头禅={result.get('catchphrases', [])}, 兴趣={result.get('interests', [])}, 风格规则数={len(result.get('style_guide', []))}")
             return result
 
         budget = token_budget if token_budget > 0 else self.TOKEN_BUDGET_PER_BATCH
@@ -174,7 +174,7 @@ class PersonaAnalyzer:
         final_persona['early_stopped'] = converged
 
         logger.info(f"[人格分析] 画像生成完成: 性格={final_persona.get('personality', '未知')}, 风格={final_persona.get('speaking_style', '未知')}")
-        logger.info(f"[人格分析] 口头禅={final_persona.get('catchphrases', [])}, 兴趣={final_persona.get('interests', [])}, 典型回复数={len(final_persona.get('typical_responses', []))}")
+        logger.info(f"[人格分析] 口头禅={final_persona.get('catchphrases', [])}, 兴趣={final_persona.get('interests', [])}, 风格规则数={len(final_persona.get('style_guide', []))}")
         logger.info(f"[人格分析] 统计: 消息={total_msg_count}, 批次={len(batch_results)}/{len(batches)}, 早停={'是' if converged else '否'}")
 
         return final_persona
@@ -280,7 +280,7 @@ class PersonaAnalyzer:
             logger.debug(f"[人格分析] 批次 LLM响应预览: {response_text[:200]}...")
 
             result = self._parse_response(response_text, len(batch))
-            logger.info(f"[人格分析] 批次分析完成: 性格={result.get('personality', '未知')}, 口头禅数={len(result.get('catchphrases', []))}, 典型回复数={len(result.get('typical_responses', []))}")
+            logger.info(f"[人格分析] 批次分析完成: 性格={result.get('personality', '未知')}, 口头禅数={len(result.get('catchphrases', []))}, 风格规则数={len(result.get('style_guide', []))}")
             return result
 
         except Exception as e:
@@ -323,13 +323,15 @@ class PersonaAnalyzer:
 - interests: 兴趣关键词（3-5个，从消息推断）
 - values: 价值观倾向（可选，如「重视友情」）
 - emotional_pattern: 情绪特点（2-4字，如「外露」「内敛」）
-- typical_responses: 最重要！选5-8条最能代表其说话风格的原消息原文，保持原样不修改
+- typical_responses: 选5-8条最能代表其说话风格的原消息原文，保持原样不修改
+- style_guide: 最重要！从原消息中抽象出4-6条可执行的说话规则，每条规则描述「在什么场景下用什么方式说话」，格式如「觉得好笑时夸张表达，如先哈哈哈再简短评价」「用叠词表达强烈情绪，如绝了绝了」「回复偏短，通常3-8个字」「句末偶尔加~，不用句号」。规则要具体可操作，不要写「说话自然」这种空话
 
 关键要求：
-1. typical_responses 是最重要的字段，务必选最有风格代表性的原消息，数量5-8条
-2. speaking_style/tone/emotional_pattern 要简短，不要写长描述
-3. catchphrases 必须是真实出现过的，不要编造
-4. 不明显的特征留空或写"无明显特征"
+1. style_guide 是最重要的字段，务必从原消息中提炼出具体、可执行的说话规则
+2. typical_responses 保留原文供交叉验证，style_guide 从中抽象规则
+3. speaking_style/tone/emotional_pattern 要简短，不要写长描述
+4. catchphrases 必须是真实出现过的，不要编造
+5. 不明显的特征留空或写"无明显特征"
 
 只输出 JSON。"""
 
@@ -350,9 +352,10 @@ class PersonaAnalyzer:
 8. interests：合并去重
 9. values：如有则保留
 10. emotional_pattern：2-4字
-11. typical_responses：最重要！从各批次的典型回复中选出最具代表性的5-8条，必须保留原文不修改
+11. typical_responses：从各批次的典型回复中选出最具代表性的5-8条，必须保留原文不修改
+12. style_guide：最重要！从各批次的 style_guide 中合并去重，再结合 typical_responses 补充遗漏的规则，最终保留4-6条最核心的说话规则。规则要具体可操作，描述「在什么场景下用什么方式说话」
 
-关键：typical_responses 是最重要的字段，优先保留风格最鲜明、最有代表性的原消息。抽象描述要简短。
+关键：style_guide 是最重要的字段，规则必须具体可执行，不要写空话。typical_responses 保留原文供交叉验证。
 
 只输出 JSON。"""
 
@@ -399,7 +402,7 @@ class PersonaAnalyzer:
 
         required_fields = [
             'personality', 'speaking_style', 'catchphrases', 'interests', 'emoji_usage',
-            'tone', 'sentence_pattern', 'punctuation', 'values', 'emotional_pattern', 'typical_responses'
+            'tone', 'sentence_pattern', 'punctuation', 'values', 'emotional_pattern', 'typical_responses', 'style_guide'
         ]
         missing_fields = []
         for field in required_fields:
@@ -416,11 +419,13 @@ class PersonaAnalyzer:
             persona['interests'] = []
         if not isinstance(persona.get('typical_responses'), list):
             persona['typical_responses'] = []
+        if not isinstance(persona.get('style_guide'), list):
+            persona['style_guide'] = []
 
         persona['message_count'] = message_count
         persona['created_at'] = None
 
-        logger.debug(f"[人格分析] 批次解析结果: 性格={persona.get('personality')}, 风格={persona.get('speaking_style')}, 口头禅={persona.get('catchphrases')}, 兴趣={persona.get('interests')}, 典型回复数={len(persona.get('typical_responses', []))}")
+        logger.debug(f"[人格分析] 批次解析结果: 性格={persona.get('personality')}, 风格={persona.get('speaking_style')}, 口头禅={persona.get('catchphrases')}, 兴趣={persona.get('interests')}, 风格规则数={len(persona.get('style_guide', []))}")
 
         return persona
 
@@ -437,6 +442,7 @@ class PersonaAnalyzer:
             'values': '',
             'emotional_pattern': '稳定',
             'typical_responses': [],
+            'style_guide': [],
             'message_count': 0,
             'created_at': None,
         }

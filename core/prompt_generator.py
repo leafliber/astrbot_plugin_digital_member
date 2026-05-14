@@ -1,6 +1,6 @@
 """
 Prompt 生成器 - 生成带人格上下文的 Prompt
-核心原则：示例驱动 > 特征描述，避免 LLM 过度表演人格特征
+核心原则：风格规则驱动 > 原文示例，避免 LLM 照抄典型发言
 """
 import re
 from astrbot import logger
@@ -36,17 +36,17 @@ class PromptGenerator:
             'catchphrases': persona.get('catchphrases', []),
             'interests': persona.get('interests', []),
             'values': persona.get('values', ''),
-            'typical_responses': persona.get('typical_responses', []),
+            'style_guide': persona.get('style_guide', []),
         }
 
-    def _build_examples_section(self, name: str, typical_responses: list) -> str:
-        """构建示例段落"""
-        if not typical_responses:
+    def _build_style_guide_section(self, name: str, style_guide: list) -> str:
+        """构建风格规则段落，替代原文示例，避免 LLM 照抄"""
+        if not style_guide:
             return ""
-        examples = "\n".join([f"· {resp}" for resp in typical_responses[:8]])
+        rules = "\n".join([f"· {rule}" for rule in style_guide[:6]])
         return f"""
-【{name}说过的话】（模仿这些话的语气和节奏，不是照抄内容）
-{examples}"""
+【{name}的说话规则】（按这些规则组织你的回复，不要照抄规则中的例子）
+{rules}"""
 
     def _build_background_section(self, catchphrases: list, interests: list, values: str) -> str:
         """构建背景提示段落"""
@@ -102,12 +102,12 @@ class PromptGenerator:
         p = self._parse_persona(persona)
 
         brief_sketch = self._build_brief_sketch(p['personality'], p['speaking_style'], p['tone'])
-        examples_section = self._build_examples_section(name, p['typical_responses'])
+        style_section = self._build_style_guide_section(name, p['style_guide'])
         background_section = self._build_background_section(p['catchphrases'], p['interests'], p['values'])
         history_section = self._build_history_section(name, history)
 
         prompt = f"""你正在以「{name}」的身份在群里聊天。{brief_sketch}{background_section}
-{examples_section}
+{style_section}
 {history_section}
 群里有人说：{question}
 
@@ -115,7 +115,7 @@ class PromptGenerator:
 
 {name}："""
 
-        logger.debug(f"[Prompt生成] 代称={name}, 性格={p['personality']}, 示例数={len(p['typical_responses'])}")
+        logger.debug(f"[Prompt生成] 代称={name}, 性格={p['personality']}, 风格规则数={len(p['style_guide'])}")
         if history:
             logger.debug(f"[Prompt生成] 历史轮数={len(history)}, 使用最近{min(len(history), 10)}条")
 
@@ -137,13 +137,13 @@ class PromptGenerator:
         p = self._parse_persona(persona)
 
         brief_sketch = self._build_brief_sketch(p['personality'], p['speaking_style'], p['tone'])
-        examples_section = self._build_examples_section(name, p['typical_responses'])
+        style_section = self._build_style_guide_section(name, p['style_guide'])
         background_section = self._build_background_section(p['catchphrases'], p['interests'], p['values'])
         history_section = self._build_history_section(name, history)
         iris_guidance = self._build_iris_tool_guidance() if enable_iris_tools else ""
 
         system_prompt = f"""你正在以「{name}」的身份在群里聊天。{brief_sketch}{background_section}
-{examples_section}
+{style_section}
 {history_section}{iris_guidance}
 
 重要规则：
@@ -151,7 +151,7 @@ class PromptGenerator:
 2. 用[MSG]分隔多条消息，每条1-3句，总条数不超过3条
 3. 回复时以 [{name}] 开头"""
 
-        logger.debug(f"[Prompt生成-Agent] 代称={name}, 性格={p['personality']}, 示例数={len(p['typical_responses'])}, iris_tools={enable_iris_tools}")
+        logger.debug(f"[Prompt生成-Agent] 代称={name}, 性格={p['personality']}, 风格规则数={len(p['style_guide'])}, iris_tools={enable_iris_tools}")
 
         return system_prompt
 
@@ -159,7 +159,7 @@ class PromptGenerator:
         """构建简短的角色素描，避免特征堆砌
 
         只保留最核心的 1-2 个特征描述，让 LLM 有基本方向感，
-        但不至于逐条表演。具体风格由典型回复示例传达。
+        但不至于逐条表演。具体风格由风格规则传达。
         """
         core_parts = []
         if personality:
