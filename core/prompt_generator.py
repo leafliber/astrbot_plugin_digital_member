@@ -9,13 +9,11 @@ from astrbot import logger
 class PromptGenerator:
     """Prompt 生成器 - 注入人格上下文和历史记录"""
 
-    MSG_SEPARATOR = "[MSG]"
-
     CORE_INSTRUCTION = "像真人聊天一样自然回复，不要刻意展示性格特征，不要堆砌口头禅和表情，大部分就是将性格融入普通说话，偶尔会带带口头禅"
 
     RESPONSE_GUIDE = """回复要求：
 1. 严格遵循说话规则中描述的风格，让回复像这个人自己说出来的
-2. 如果需要发多条消息，用[MSG]分隔，每条1-3句，总条数不超过3条
+2. 如果需要发多条消息，用换行分隔，每条1-3句，总条数不超过3条
 3. 多条消息之间要连贯自然——像真人在群里连续发几条消息那样，后一条是前一条的延伸或补充，而不是各自独立
 4. 把对方的话当作群聊对话来回应，自然接话、附和或反驳"""
 
@@ -24,8 +22,14 @@ class PromptGenerator:
         if not response:
             return []
 
-        messages = re.split(r'\[MSG\]', response)
-        messages = [msg.strip() for msg in messages if msg.strip()]
+        text = response.strip()
+
+        if '\n\n' in text:
+            segments = re.split(r'\n\n+', text)
+        else:
+            segments = re.split(r'\n', text)
+
+        messages = [seg.strip() for seg in segments if seg.strip()]
 
         if len(messages) > 6:
             logger.debug(f"[消息分割] 消息数量超过6条，截断为6条")
